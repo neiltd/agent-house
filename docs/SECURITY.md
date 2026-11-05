@@ -56,6 +56,16 @@ With `cockpit.targets` set, the paired browser can start headless Claude Code ru
 - A dollar cap, a 30-minute timeout, a 1 MB output cap, a minimal environment, and the whole process group is killed on Stop or exit. At most 3 at once and 20 an hour.
 - `--resume` only continues sessions the cockpit itself created. Conversation titles are masked. Chat streams go only to the paired browser.
 
+## House-owned project conversations (pilot)
+
+For pilot projects only, the paired browser can send messages to a conversation the house runs:
+
+- Pilot targets are hard-coded. Config can only rename or disable them. A fixed list of folders is refused whatever the config says, along with home, `~/.claude`, `~/.agent-house` and excluded folders, all realpath-checked.
+- Turns run with `--permission-mode manual --permission-prompts none --setting-sources user --strict-mcp-config` and a dollar cap. The message goes on stdin, with a minimal environment, a process-group kill, an output cap and a 30-minute timeout.
+- Before each turn the house refuses if that session is open anywhere (`claude agents --json`). After the turn it checks the session id is unchanged.
+- Messages starting with `/`, `!` or `-` are refused, after zero-width characters are stripped. Inbox answers must match `^\d{1,4}: [A-Z]$`, built from the card number and a letter, never from card text.
+- The page can't approve writes to control files (`.claude/**`, `.git/**`, `CLAUDE.md`, `AGENTS.md`, `.mcp.json`, `settings*.json`), so one click can't widen later turns.
+
 ## Reporting a problem
 
 Open an issue, or for anything sensitive, a private security advisory on the GitHub repo.
