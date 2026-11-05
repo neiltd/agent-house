@@ -1,0 +1,5 @@
+node_modules/
+.DS_Store
+# your own setup; copy agent-house.config.example.json to start
+agent-house.config.json
+docs/private/

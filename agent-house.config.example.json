@@ -1,0 +1,12 @@
+{
+  "pinned": ["my-app"],
+  "finished": ["old-project"],
+  "rules": [
+    { "prefix": "Desktop/my-app", "id": "my-app", "name": "My App" },
+    { "prefix": "code/my-app-api", "id": "my-app", "name": "My App" }
+  ],
+  "school": [{ "prefix": "Documents/University", "name": "Uni" }],
+  "colors": { "my-app": "#e3a72f" },
+  "robots": [],
+  "answering": { "enabled": true, "waitSeconds": 45, "exclude": ["Desktop/sensitive-project"] }
+}

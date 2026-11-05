@@ -1,0 +1,26 @@
+{
+  "name": "agent-house",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A live pixel-art house of every Claude Code agent on your computer: who's working, what's waiting on you, and where your usage went. No dependencies.",
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/neiltd/agent-house.git"
+  },
+  "keywords": [
+    "claude-code",
+    "agents",
+    "dashboard",
+    "pixel-art",
+    "visualization"
+  ]
+}
