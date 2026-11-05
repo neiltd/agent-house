@@ -1077,7 +1077,12 @@ function drawControlCrew(t) {
     const c = { look: l };
     if (!busy.length) { const x = spots[k].x; const top = drawPerson(c, x, spots[k].y, t, { still: true }); text(String(l.name || l.key).toUpperCase(), x, top - 9, l.holo, 'center'); return; }
     const period = 12, clock = t + k * 4, slot = Math.floor(clock / period), u = (clock % period) / period;
-    const r = busy[(slot + k) % busy.length], x = r.x + r.w - 14 - k * 13, fy = floorY(r);
+    const r = busy[(slot + k) % busy.length], fy = floorY(r);
+    // how many of the three are visiting this same room right now: give each one room for its name
+    const sharing = crew.slice(0, 3).map((_, j) => busy[(Math.floor((t + j * 4) / period) + j) % busy.length]).slice(0, k).filter((rr) => rr === r).length;
+    const x = r.x + r.w - 16 - sharing * 34;
+    const crowd = [...chars.values()].filter((cc) => cc.room === r && cc.where === 'room').length;
+    if (x < r.x + 12 || (r.w < 100 && crowd + sharing >= 2)) { const sp = spots[k]; const top0 = drawPerson(c, sp.x, sp.y, t, { still: true }); text(String(l.name || l.key).toUpperCase(), sp.x, top0 - 9, l.holo, 'center'); return; } // no room here: wait in the Control Room
     const fade = reduce ? 1 : Math.min(1, u / 0.08, (1 - u) / 0.08);
     ctx.save(); ctx.globalAlpha = Math.max(0, fade);
     const prev = ctx.globalAlpha, top = drawPerson(c, x, fy, t, { still: true }); ctx.globalAlpha = prev;
