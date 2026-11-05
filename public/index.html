@@ -384,7 +384,7 @@ function syncChars() {
       chars.set(a.key, c);
       c.room = room;
       // A named teammate walks in from the stairs at the room's edge; everyone else starts at a desk.
-      c.x = look ? room.x + 3 : stationX(c, 'desk');
+      c.x = look ? (hasLift() ? LIFT_X : room.x + 3) : stationX(c, 'desk');
     }
     // Rooms are rebuilt on every update, so compare by id: only a real move to another room resets position.
     if (c.room.id !== room.id && c.where === 'room') c.x = room.x + 20;
@@ -411,7 +411,29 @@ function syncChars() {
   }
 }
 const arrived = (c) => c.where === c.goal.where && Math.abs(c.x - c.goal.x) < 0.6;
+const charY = (c) => c.where === 'lift' ? c.ly : c.where === 'street' ? groundY : floorY(c.room);
+/* The lift: a glass lift on the right of the house, with a balcony on every floor. Its ground stop is the front door. */
+const LIFT_X = 464, LIFT_W = 12;
+const hasLift = () => false; // switched on once the asymmetric layout places the lifts
 function move(c, dt) {
+  if (hasLift()) return moveByLift(c, dt);
+  moveSimple(c, dt);
+}
+function moveByLift(c, dt) {
+  const sp = 46 * dt, lsp = 60 * dt, fy = floorY(c.room);
+  const walkTo = (x) => { const d = x - c.x; if (reduce || Math.abs(d) <= sp) { c.x = x; return true; } c.x += Math.sign(d) * sp; return false; };
+  if (c.where === 'lift') {
+    const target = c.liftTo === 'street' ? groundY : fy, d = target - c.ly;
+    if (reduce || Math.abs(d) <= lsp) { c.ly = target; c.where = c.liftTo; c.x = LIFT_X; }
+    else c.ly += Math.sign(d) * lsp;
+  } else if (c.where !== c.goal.where) {
+    // walk to the lift on this level, then ride
+    // riding up from the street starts at the ground; riding down starts at this room's floor
+    if (walkTo(LIFT_X)) { c.ly = c.goal.where === 'room' ? groundY : fy; c.liftTo = c.goal.where; c.where = 'lift'; }
+  } else walkTo(c.goal.x);
+  c.inside = c.a.state === 'outside' && arrived(c);
+}
+function moveSimple(c, dt) {
   const sp = 46 * dt, exitX = c.room.x + c.room.w - 4;
   if (c.where !== c.goal.where) {
     const target = c.where === 'room' ? exitX : DOOR_X, d = target - c.x;
@@ -745,6 +767,29 @@ function drawControlCrew(t) {
   });
 }
 
+/* ---------- trouble: a failed tool call makes its room glitch for a while ---------- */
+const TROUBLE_MS = 45e3;
+const troubled = (r) => [...chars.values()].some((c) => c.room === r && c.a && c.a.errorAt && snap.generatedAt - c.a.errorAt < TROUBLE_MS);
+function drawTrouble(r, t) {
+  // the wall opens: a panel of wiring and blinking lights behind the furniture
+  const px = r.x + Math.round(r.w * 0.55), py = r.y + 16, pw = Math.min(34, r.w - 40), ph = r.h - 30;
+  if (pw < 16) return;
+  rect('#0b0e16', px, py, pw, ph); rect('#3a3324', px - 1, py - 1, pw + 2, 1); rect('#3a3324', px - 1, py + ph, pw + 2, 1);
+  const wires = ['#e0672f', '#3aa39b', '#e3a72f', '#7b8cff'];
+  wires.forEach((c, i) => { const x = px + 4 + i * Math.floor((pw - 8) / 4); rect(c, x, py + 2, 1, ph - 4); rect(c, x, py + 6 + ((i * 7) % (ph - 12)), 4, 1); });
+  for (let i = 0; i < 6; i++) { const on = reduce || Math.floor(t * 6 + i * 1.7) % 3 === 0; rect(on ? (i % 2 ? '#ff6b5e' : '#7bd389') : '#2a2f3a', px + 3 + (i * 5) % (pw - 4), py + 4 + Math.floor(i / 2) * 7, 2, 2); }
+  // binary code runs down the wall
+  ctx.save(); ctx.beginPath(); ctx.rect(r.x, r.y, r.w, r.h); ctx.clip();
+  ctx.globalAlpha = .35; ctx.font = '600 6px ui-monospace, Menlo, monospace'; ctx.textBaseline = 'top'; ctx.textAlign = 'left'; ctx.fillStyle = '#ff7ae0';
+  for (let col = 0; col < Math.floor(r.w / 9); col++) {
+    const off = reduce ? 0 : (t * 18 + col * 13) % (r.h + 30);
+    for (let k = 0; k < 4; k++) ctx.fillText(((col * 7 + k * 3 + Math.floor(t)) % 2) ? '1' : '0', r.x + 3 + col * 9, r.y - 20 + off + k * 7);
+  }
+  ctx.restore();
+  // the lights flicker
+  if (!reduce && Math.floor(t * 9) % 5 === 0) { ctx.globalAlpha = .28; rect('#000000', r.x, r.y, r.w, r.h); ctx.globalAlpha = 1; }
+}
+
 /* ---------- room close-up: click a room to look inside; the house AIs walk in with you ---------- */
 function openView(id) {
   const r = rooms.find((x) => x.id === id); if (!r || r.vacant) return;
@@ -820,7 +865,7 @@ function drawRoomView(r, t) {
 }
 function drawChar(c, t) {
   if (c.inside) return;
-  const fy = c.where === 'street' ? groundY : floorY(c.room), x = Math.round(c.x), a = c.a;
+  const fy = Math.round(charY(c)), x = Math.round(c.x), a = c.a;
   const walking = !arrived(c), step = walking && !reduce ? Math.floor(t * 8) % 2 : 0;
   rect('rgba(0,0,0,.28)', x - 4, fy - 1, 9, 1);
   let top;
@@ -866,6 +911,7 @@ function draw(t) {
     const lit = [...chars.values()].some((c) => c.room === r && c.a.state !== 'idle');
     rect(lit ? '#ffd27a' : '#6b5a3a', cx - 4, r.y + 7, 9, 3);
     if (r.staff) drawStaff(r, t);
+    if (troubled(r)) drawTrouble(r, t);
     if (r.vacant) { const cx = r.x + r.w / 2, fy2 = floorY(r); rect('#6b4429', cx - 14, fy2 - 34, 28, 14); rect('#e8dcc0', cx - 13, fy2 - 33, 26, 12); text('FREE', cx, fy2 - 32, '#3a2416', 'center'); rect('#6b4429', cx - 1, fy2 - 20, 2, 20); }
     if (r.guest) { const names = r.guest.slice(0, Math.max(1, Math.floor((r.w - 40) / 38))).map((p) => p.name.toUpperCase()); names.forEach((n, i) => { const dx = r.x + 30 + i * 38; rect('#3a2416', dx - 9, fy - 30, 18, 30); rect('#6b4429', dx - 8, fy - 29, 16, 29); rect('#e3a72f', dx + 4, fy - 16, 2, 2); text(fitText(n, 36), dx, fy - 40, '#cdbb98', 'center'); }); }
   }
@@ -1078,7 +1124,7 @@ cv.addEventListener('click', (e) => {
     return;
   }
   const lx = (e.clientX - b.left) * W / b.width, ly = (e.clientY - b.top) * H / b.height - TOP();
-  for (const c of chars.values()) { if (c.inside) continue; const fy = c.where === 'street' ? groundY : floorY(c.room); if (Math.abs(lx - c.x) <= 7 && ly >= fy - 30 && ly <= fy) return select('agent', c.key); }
+  for (const c of chars.values()) { if (c.inside) continue; const fy = charY(c); if (Math.abs(lx - c.x) <= 7 && ly >= fy - 30 && ly <= fy) return select('agent', c.key); }
   if (lx >= 478 && lx <= 498 && ly >= groundY - 40 && ly <= groundY) return $('mail-card').scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block:'nearest' });
   for (const p of PLACES) if (lx >= p.x && lx <= p.x + p.w && ly >= groundY - p.h - 12 && ly <= groundY) return select('place', p.id);
   if (ly < 60 && lx > 30 && lx < 450) return select('attic', 'attic');

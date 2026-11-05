@@ -122,3 +122,11 @@ test('with no config, projects still get rooms from their folder names', () => {
   assert.equal(pf(`${H}/Desktop/MSBA Courses/437 Forecasting/A1`, H).name, 'MSBA Courses');
   assert.equal(pf(`${H}/Documents/Uni/101 Intro`, H, [], [{ prefix: 'Documents/Uni', name: 'Uni' }]).id, 'uni-101');
 });
+
+test('a failed tool call is remembered so the house can show trouble in that room', () => {
+  const s = createStore({ home: H, rules: RULES, now: () => Date.parse('2026-11-04T10:00:05Z') });
+  const cwd = `${H}/Desktop/app`;
+  s.ingest('k', { type: 'assistant', cwd, timestamp: '2026-11-04T10:00:00Z', message: { id: 'm9', content: [{ type: 'tool_use', id: 't9', name: 'Bash', input: { command: 'npm test' } }] } });
+  s.ingest('k', { type: 'user', cwd, timestamp: '2026-11-04T10:00:02Z', message: { content: [{ type: 'tool_result', tool_use_id: 't9', is_error: true, content: 'failed' }] } });
+  assert.equal(s.snapshot().agents[0].errorAt, Date.parse('2026-11-04T10:00:02Z'));
+});
