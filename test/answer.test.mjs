@@ -4,7 +4,7 @@ import { checkHookPayload, checkAnswers, createDesk, encodeDir, mask } from '../
 
 const H = '/Users/alex';
 const ROOT = `${H}/.claude/projects`;
-const APP = `${H}/Desktop/Workout_app`;
+const APP = `${H}/code/gym-app`;
 const sid = '3df92d90-77f6-4350-990e-b3307aa8d646';
 const EXCLUDE = [`${H}/Desktop/secret-project`, `${H}/acme-runtime`];
 const ctx = (cwd = APP) => ({ home: H, projectsRoot: ROOT, exclude: EXCLUDE, sessionCwd: () => cwd });
@@ -89,5 +89,5 @@ test('desk: an unanswered ask times out with no decision', async () => {
 test('mask hides token-looking strings', () => {
   assert.equal(mask('key sk-ant-api03-abcdefghijklmnop rest'), 'key ‹masked› rest');
   assert.equal(mask('/Users/alex/a.txt'), '/Users/alex/a.txt');
-  assert.equal(mask('/Users/alex/Desktop/Workout_app/ios/OurClub/Features/Session/SessionView.swift'), '/Users/alex/Desktop/Workout_app/ios/OurClub/Features/Session/SessionView.swift');
+  assert.equal(mask('/Users/alex/code/gym-app/ios/GymApp/Features/Session/SessionView.swift'), '/Users/alex/code/gym-app/ios/GymApp/Features/Session/SessionView.swift');
 });

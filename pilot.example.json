@@ -1,0 +1,8 @@
+{
+  "targets": [
+    { "id": "my-app", "name": "My app", "folder": "code/my-app" },
+    { "id": "notes", "name": "Notes site", "folder": "Documents/notes-site" }
+  ],
+  "refused": ["code/payments", "Desktop/private-stuff"],
+  "refusePatterns": ["payments", "secret"]
+}

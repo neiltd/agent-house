@@ -6,8 +6,8 @@ import { createStore } from '../lib/store.mjs';
 const H = '/Users/alex';
 const RULES = [
   { prefix: 'Desktop/secret-project', id: 'ops', name: 'Acme Ops' },
-  { prefix: 'Desktop/Projects.nosync', id: 'aicap', name: 'Acme' },
-  { prefix: 'Desktop/Projects-nosync', id: 'aicap', name: 'Acme' },
+  { prefix: 'Desktop/client.work', id: 'aicap', name: 'Acme' },
+  { prefix: 'Desktop/client-work', id: 'aicap', name: 'Acme' },
   { prefix: 'acme-runtime', id: 'aicap', name: 'Acme' },
 ];
 const SCHOOL = [{ prefix: 'Desktop/MSBA Courses', name: 'MSBA' }];
@@ -15,9 +15,9 @@ const projectFor = (cwd, home) => pf(cwd, home, RULES, SCHOOL);
 
 test('folders map to the rooms in the config', () => {
   assert.equal(projectFor(`${H}/Desktop/secret-project/state`, H).id, 'ops');
-  assert.equal(projectFor(`${H}/Desktop/Projects-nosync`, H).id, 'aicap');
-  assert.equal(projectFor(`${H}/Desktop/Projects.nosync/apps/unified-platform`, H).id, 'aicap');
-  assert.equal(projectFor(`${H}/Desktop/Workout_app/ios`, H).name, 'Workout app');
+  assert.equal(projectFor(`${H}/Desktop/client-work`, H).id, 'aicap');
+  assert.equal(projectFor(`${H}/Desktop/client.work/apps/unified-platform`, H).id, 'aicap');
+  assert.equal(projectFor(`${H}/Desktop/Gym_app/ios`, H).name, 'Gym app');
   assert.equal(projectFor(`${H}/acme-runtime/apps/x`, H).id, 'aicap');
   assert.equal(projectFor(H, H).id, 'home');
   assert.equal(projectFor(`${H}/.claude/skills`, H).id, 'home');
@@ -30,8 +30,8 @@ test('MSBA assignment folders group into their course classroom', () => {
 });
 
 test('other projects take the first folder under a container', () => {
-  assert.equal(projectFor(`${H}/Desktop/Workout app/ios/App`, H).name, 'Workout app');
-  assert.equal(projectFor(`${H}/Documents/ChatGPT/World History`, H).name, 'World History');
+  assert.equal(projectFor(`${H}/Desktop/Gym app/ios/App`, H).name, 'Gym app');
+  assert.equal(projectFor(`${H}/Documents/ChatGPT/History Notes`, H).name, 'History Notes');
   assert.equal(projectFor(`${H}/apps/agent-house/lib`, H).name, 'agent-house');
 });
 
@@ -53,7 +53,7 @@ test('usage weighting counts cache reads at a tenth', () => {
 test('a pending question becomes an ask with options, and an answer clears it', () => {
   let t = Date.parse('2026-11-02T10:00:00Z');
   const s = createStore({ home: H, rules: RULES, now: () => t });
-  const cwd = `${H}/Desktop/Projects-nosync`;
+  const cwd = `${H}/Desktop/client-work`;
   s.ingest('s1', { type: 'user', cwd, timestamp: '2026-11-02T09:59:00Z', message: { content: 'where should we host?' } });
   s.ingest('s1', { type: 'assistant', cwd, timestamp: '2026-11-02T09:59:30Z', requestId: 'r1', message: { id: 'm1', usage: { input_tokens: 5, output_tokens: 1 }, content: [
     { type: 'tool_use', id: 'tu1', name: 'AskUserQuestion', input: { questions: [{ question: 'Which platform?', options: [{ label: 'Cloudflare' }, { label: 'VPS' }] }] } }] } });
@@ -73,7 +73,7 @@ test('a pending question becomes an ask with options, and an answer clears it', 
 test('an agent reply that ends in a question shows as "asked you" with the thread', () => {
   const t = Date.parse('2026-11-02T10:00:00Z');
   const s = createStore({ home: H, rules: RULES, now: () => t });
-  const cwd = `${H}/Desktop/Projects-nosync`;
+  const cwd = `${H}/Desktop/client-work`;
   s.ingest('s2', { type: 'user', cwd, timestamp: '2026-11-02T09:50:00Z', message: { content: 'how different are the fees?' } });
   s.ingest('s2', { type: 'assistant', cwd, timestamp: '2026-11-02T09:51:00Z', message: { id: 'm2', content: [{ type: 'text', text: 'Cloudflare Tunnel is free; a VPS is about $5/month. Which one do you want?' }] } });
   const ask = s.snapshot().asks.find((a) => a.key === 's2');
@@ -129,4 +129,18 @@ test('a failed tool call is remembered so the house can show trouble in that roo
   s.ingest('k', { type: 'assistant', cwd, timestamp: '2026-11-04T10:00:00Z', message: { id: 'm9', content: [{ type: 'tool_use', id: 't9', name: 'Bash', input: { command: 'npm test' } }] } });
   s.ingest('k', { type: 'user', cwd, timestamp: '2026-11-04T10:00:02Z', message: { content: [{ type: 'tool_result', tool_use_id: 't9', is_error: true, content: 'failed' }] } });
   assert.equal(s.snapshot().agents[0].errorAt, Date.parse('2026-11-04T10:00:02Z'));
+});
+
+test('usage per day for the last 30 days and per two hours for the last day', () => {
+  const t = Date.parse('2026-11-05T15:00:00Z');
+  const s = createStore({ home: H, rules: RULES, now: () => t });
+  const cwd = `${H}/Desktop/app`;
+  s.ingest('d1', { type: 'assistant', cwd, timestamp: '2026-11-05T14:00:00Z', requestId: 'r1', message: { id: 'a1', usage: { input_tokens: 10, output_tokens: 2 }, content: [] } });
+  s.ingest('d1', { type: 'assistant', cwd, timestamp: '2026-11-01T14:00:00Z', requestId: 'r2', message: { id: 'a2', usage: { input_tokens: 4 }, content: [] } });
+  const snap = s.snapshot();
+  assert.equal(snap.daily.length, 30);
+  assert.equal(snap.daily.at(-1).raw, 12, 'today is last');
+  assert.equal(snap.daily.reduce((a, d) => a + d.raw, 0), 16);
+  assert.equal(snap.hours.length, 12);
+  assert.equal(snap.hours.reduce((a, h) => a + h.raw, 0), 12, 'only the last 24 hours');
 });

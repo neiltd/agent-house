@@ -9,10 +9,12 @@ import http from 'node:http';
 import readline from 'node:readline';
 import { createStore } from './lib/store.mjs';
 import { projectFor, DEFAULT_RULES } from './lib/classify.mjs';
-import { parseInbox } from './lib/inbox.mjs';
+import { parseInbox, parseNeedsUser } from './lib/inbox.mjs';
 import { createDesk, checkHookPayload, mask } from './lib/answer.mjs';
 import crypto from 'node:crypto';
 import { startClaude } from './lib/runners/claude.mjs';
+import { pilotTargets, readPilotLocal, cleanMessage, answerText } from './lib/pilot.mjs';
+import { execFile } from 'node:child_process';
 
 const HOME = os.homedir();
 const ROOT = process.env.CLAUDE_PROJECTS || path.join(HOME, '.claude', 'projects');
@@ -20,7 +22,7 @@ const PORT = Number(process.env.PORT || 4317);
 const HOST = '127.0.0.1';
 const HERE = path.dirname(new URL(import.meta.url).pathname);
 const CONFIG_PATH = process.env.AGENT_HOUSE_CONFIG || path.join(HERE, 'agent-house.config.json');
-const WEEK_MS = 8 * 86400e3;
+const WEEK_MS = 31 * 86400e3; // read a month of history at start, for the 30-day usage view
 
 function loadConfig() {
   try { return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')); } catch { return {}; }
@@ -172,6 +174,17 @@ function inboxes() {
     const project = inHome ? projectFor(path.dirname(p.file), HOME, rules, school) : null;
     out.push({ url: p.url, title: title || p.title, project: project && project.id !== 'home' ? project.id : p.project, by: p.by, updated: Math.round(st.mtimeMs), asks: open });
   }
+  // Relay-style ask files from config: "inboxFiles": [{ "file": "Desktop/x-relay/NEEDS-USER.md", "project": "<room id>", "title": "..." }]
+  for (const f of config.inboxFiles || []) {
+    if (!f || typeof f.file !== 'string' || typeof f.project !== 'string') continue;
+    const file = path.resolve(HOME, f.file);
+    if (!file.startsWith(HOME + path.sep) || !/\.(md|txt)$/i.test(file)) continue;
+    let st; try { st = fs.statSync(file); } catch { continue; } // no file = nothing open
+    if (!st.isFile() || st.size > 200_000) continue;
+    let c = inboxCache.get(file);
+    if (!c || c.mtimeMs !== st.mtimeMs) { try { c = { mtimeMs: st.mtimeMs, parsed: parseNeedsUser(fs.readFileSync(file, 'utf8'), { title: f.title || 'Needs you' }) }; } catch { continue; } inboxCache.set(file, c); }
+    out.push({ url: null, file: f.file, title: c.parsed.title, project: f.project, by: 'relay', updated: Math.round(st.mtimeMs), asks: c.parsed.asks.filter((a) => a.open) });
+  }
   return out.sort((a, b) => b.asks.length - a.asks.length);
 }
 
@@ -271,7 +284,7 @@ function assignRooms(snap) {
   return roomSlots;
 }
 
-// ---------- cockpit: talk to agents from the page (docs/private/cockpit-design.md + Kai's review) ----------
+// ---------- cockpit: talk to agents from the page (design notes in docs/private/) ----------
 // v1 is read-only. Targets come only from config "cockpit.targets"; each folder is checked with realpath.
 const CONV_FILE = path.join(STATE_DIR, 'conversations.json');
 const convs = new Map(); // id -> { id, target, sessionId, title, created, updated, events: [], run }
@@ -284,7 +297,7 @@ function cockpitTargets() {
     if (!t || typeof t.id !== 'string' || typeof t.folder !== 'string') continue;
     let dir; try { dir = fs.realpathSync(path.resolve(HOME, t.folder)); } catch { continue; }
     if (!dir.startsWith(HOME + path.sep) || banned.some((b) => dir === b || dir.startsWith(b + path.sep)) || !fs.statSync(dir).isDirectory()) continue;
-    out.push({ id: t.id, name: String(t.name || t.id), dir, agent: typeof t.agent === 'string' && /^[a-z0-9-]+$/.test(t.agent) ? t.agent : null });
+    out.push({ id: t.id, name: String(t.name || t.id), dir, project: projectFor(dir, HOME, rules, school).id, agent: typeof t.agent === 'string' && /^[a-z0-9-]+$/.test(t.agent) ? t.agent : null });
   }
   return out;
 }
@@ -310,6 +323,7 @@ function chatSend(body) {
   push({ type: 'you', text });
   c.run = startClaude({ cwd: target.dir, text, agent: target.agent, resume: c.sessionId, budgetUsd: Number(config.cockpit?.budgetUsd) || 1,
     onEvent: (ev) => {
+      if (ev.signedOut) signedOut = Date.now();
       if (ev.type === 'session' && ev.sessionId) { c.sessionId = ev.sessionId; saveConvs(); return; }
       if (ev.sessionId) c.sessionId = ev.sessionId;
       push(ev);
@@ -321,6 +335,75 @@ function chatSend(body) {
 process.on('exit', () => { for (const c of convs.values()) if (c.run) c.run.stop(); });
 for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => process.exit(0));
 
+// ---------- house-owned project conversations (pilot) ----------
+// The house runs each pilot project's conversation: one headless turn per message, `--resume` on the same session.
+// Rules: lib/pilot.mjs. Which projects: pilot.local.json (git-ignored), or AGENT_HOUSE_PILOT_FILE.
+const PROJ_FILE = path.join(STATE_DIR, 'project-convos.json');
+let projStore = {}; // target id -> { sessionId, created }
+try { projStore = JSON.parse(fs.readFileSync(PROJ_FILE, 'utf8')) || {}; } catch {}
+const saveProj = () => { try { fs.writeFileSync(PROJ_FILE, JSON.stringify(projStore, null, 1) + '\n', { mode: 0o600 }); } catch {} };
+const projRuns = new Map(); // target id -> { events: [], run, last }
+let projSends = [], signedOut = null;
+const PILOT_FILE = process.env.AGENT_HOUSE_PILOT_FILE || path.join(HERE, 'pilot.local.json');
+let pilotLocal = { targets: [], refused: [], refusePatterns: [] }, pilotMtime = -1;
+function loadPilotLocal() {
+  let m; try { m = fs.statSync(PILOT_FILE).mtimeMs; } catch { pilotLocal = { targets: [], refused: [], refusePatterns: [] }; pilotMtime = -1; return pilotLocal; }
+  if (m !== pilotMtime) { pilotMtime = m; try { pilotLocal = readPilotLocal(fs.readFileSync(PILOT_FILE, 'utf8')); } catch { pilotLocal = { targets: [], refused: [], refusePatterns: [] }; } }
+  return pilotLocal;
+}
+function pilots() {
+  return pilotTargets({ home: HOME, config, env: process.env, local: loadPilotLocal(), realpath: (d) => fs.realpathSync(d), isDir: (d) => { try { return fs.statSync(d).isDirectory(); } catch { return false; } },
+    projectId: (d) => projectFor(d, HOME, rules, school).id, extraRefused: excludeDirs() });
+}
+/** Every session Claude Code says is open right now (interactive or background), by session id. */
+function openSessions() {
+  return new Promise((resolve) => {
+    execFile('claude', ['agents', '--json'], { timeout: 5000, env: { PATH: process.env.PATH, HOME, USER: process.env.USER || '', TMPDIR: os.tmpdir() } }, (err, out) => {
+      if (err) return resolve(null);
+      try { resolve(new Set(JSON.parse(out).map((x) => x.sessionId).filter(Boolean))); } catch { resolve(null); }
+    });
+  });
+}
+async function projectSend(body) {
+  const target = pilots().find((t) => t.id === body.target);
+  if (!target) return { ok: false, error: 'that project is not a pilot project' };
+  let text;
+  if (body.num != null || body.letter != null) { text = answerText(body.num, body.letter); if (!text) return { ok: false, error: 'an answer is a number and a letter, like "27: A"' }; }
+  else { const m = cleanMessage(body.text); if (!m.ok) return m; text = m.text; }
+  const st = projRuns.get(target.id) || { events: [], run: null, last: 0 };
+  projRuns.set(target.id, st);
+  if (st.run) return { ok: false, error: 'still working on your last message' };
+  if (Date.now() - st.last < 3000) return { ok: false, error: 'slow down a little' };
+  projSends = projSends.filter((t) => Date.now() - t < 3600e3);
+  if (projSends.length >= 60) return { ok: false, error: 'limit: 60 messages an hour' };
+  const saved = projStore[target.id];
+  if (saved && saved.sessionId) {
+    const open = await openSessions();
+    if (open === null) return { ok: false, error: "couldn't check whether the conversation is open elsewhere; try again" };
+    if (open.has(saved.sessionId)) return { ok: false, error: 'that conversation is open in a terminal: close it there, or use it there' };
+  }
+  st.last = Date.now(); projSends.push(Date.now());
+  const push = (ev) => { st.events.push({ ts: Date.now(), ...ev }); if (st.events.length > 300) st.events.splice(0, st.events.length - 300); };
+  push({ type: 'you', text });
+  st.run = startClaude({ cwd: target.dir, text, resume: saved?.sessionId || null, tools: null, permissionMode: 'manual', budgetUsd: Number(config.pilot?.budgetUsd) || 2,
+    onEvent: (ev) => {
+      if (ev.signedOut) signedOut = Date.now();
+      if (ev.type === 'session') {
+        if (!saved?.sessionId && ev.sessionId) { projStore[target.id] = { sessionId: ev.sessionId, created: Date.now() }; saveProj(); }
+        return;
+      }
+      if (ev.type === 'done' || ev.type === 'error') {
+        st.run = null;
+        const want = projStore[target.id]?.sessionId;
+        if (ev.sessionId && want && ev.sessionId !== want) { push({ type: 'error', text: `The turn ran in a different session (${ev.sessionId.slice(0, 8)}), so it was not saved as this project's conversation.` }); return; }
+        if (!ev.signedOut && ev.type === 'done') signedOut = null;
+      }
+      push(ev);
+    } });
+  return { ok: true };
+}
+process.on('exit', () => { for (const st of projRuns.values()) if (st.run) st.run.stop(); });
+
 // ---------- http ----------
 const clients = new Map(); // res -> { paired }
 let lastJson = '';
@@ -330,6 +413,8 @@ function stateJson() {
   snap.ready = ready; snap.progress = progress; snap.pinned = config.pinned || [];
   snap.colors = config.colors || {}; snap.robots = config.robots || [];
   snap.characters = config.characters || {};
+  snap.pilot = pilots().map(({ id, name, project }) => ({ id, name, project, running: !!projRuns.get(id)?.run }));
+  snap.signedOut = signedOut;
   snap.theme = config.theme || 'classic';
   snap.weather = config.weather ? weather : null;
   if (ready) snap.slots = assignRooms(snap);
@@ -400,11 +485,14 @@ async function pageAnswer(req, res) {
 async function cockpit(req, res, url) {
   if (!answeringOn()) return json(res, 403, { error: 'the cockpit needs the server started from a terminal' });
   if (!isPaired(req)) return json(res, 403, { error: 'this browser is not paired' });
-  if (url.pathname === '/api/chat/list') return json(res, 200, { targets: cockpitTargets().map(({ id, name }) => ({ id, name })), conversations: [...convs.values()].sort((a, b) => b.updated - a.updated).slice(0, 30).map(({ events, run, ...c }) => ({ ...c, running: !!run })) });
+  if (url.pathname === '/api/chat/list') return json(res, 200, { targets: cockpitTargets().map(({ id, name, project }) => ({ id, name, project })), conversations: [...convs.values()].sort((a, b) => b.updated - a.updated).slice(0, 30).map(({ events, run, ...c }) => ({ ...c, running: !!run })) });
+  if (url.pathname === '/api/project/state') { const t = pilots().find((x) => x.id === url.searchParams.get('target')); if (!t) return json(res, 404, { error: 'not a pilot project' }); const st = projRuns.get(t.id); return json(res, 200, { running: !!st?.run, events: st?.events || [], sessionId: projStore[t.id]?.sessionId || null }); }
   if (url.pathname === '/api/chat/events') { const c = convs.get(String(url.searchParams.get('id') || '')); return c ? json(res, 200, { running: !!c.run, events: c.events }) : json(res, 404, { error: 'no such conversation' }); }
   if (req.method !== 'POST' || req.headers.origin !== `http://${req.headers.host}` || !String(req.headers['content-type'] || '').startsWith('application/json')) return json(res, 403, { error: 'forbidden' });
   let body; try { body = JSON.parse(await readBody(req, 16 * 1024)); } catch { return json(res, 400, { error: 'bad body' }); }
   if (url.pathname === '/api/chat/send') { const r = chatSend(body || {}); return json(res, r.ok ? 200 : 409, r); }
+  if (url.pathname === '/api/project/send') { const r = await projectSend(body || {}); return json(res, r.ok ? 200 : 409, r); }
+  if (url.pathname === '/api/project/stop') { const st = projRuns.get(String(body?.target || '')); if (st?.run) st.run.stop(); return json(res, 200, { ok: true }); }
   if (url.pathname === '/api/chat/stop') { const c = convs.get(String(body?.id || '')); if (c?.run) c.run.stop(); return json(res, 200, { ok: true }); }
   return json(res, 404, { error: 'not found' });
 }
@@ -426,7 +514,7 @@ const server = http.createServer((req, res) => {
   } else if (url.pathname === '/api/notebook') {
     const nb = store.notebook(String(url.searchParams.get('key') || ''));
     json(res, nb ? 200 : 404, nb ? { log: nb } : { error: 'no such agent' });
-  } else if (url.pathname.startsWith('/api/chat')) {
+  } else if (url.pathname.startsWith('/api/chat') || url.pathname.startsWith('/api/project/')) {
     cockpit(req, res, url).catch(() => { if (!res.writableEnded) json(res, 500, { error: 'server error' }); });
   } else if (url.pathname === '/characters.json') {
     // Character sprites: your own set in characters.local.json (git-ignored), else the generic example.

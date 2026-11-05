@@ -42,15 +42,17 @@ function runHook(payload, port = PORT) {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function waitLive(n) { for (let i = 0; i < 50; i++) { const s = JSON.parse((await req('GET', '/api/state')).body); if (s.live.length === n) return s.live; await sleep(100); } return null; }
 
-const SID = 'aaaaaaaa-1111-2222-3333-444444444444', RELAY_SID = 'bbbbbbbb-1111-2222-3333-444444444444';
+const SID = 'aaaaaaaa-1111-2222-3333-444444444444', EXCL_SID = 'bbbbbbbb-1111-2222-3333-444444444444';
 const tp = transcript(PROJ, SID);
-const relayCwd = path.join(HOME, 'Desktop', 'secret-project');
-const relayTp = transcript(relayCwd, RELAY_SID);
+const exclCwd = path.join(HOME, 'Desktop', 'secret-project');
+const exclTp = transcript(exclCwd, EXCL_SID);
 const base = (over) => ({ hook_event_name: 'PermissionRequest', session_id: SID, transcript_path: tp, cwd: PROJ, tool_name: 'Edit', tool_input: { file_path: path.join(PROJ, 'a.txt') }, ...over });
 
 const CFG = path.join(T, 'config.json');
-fs.writeFileSync(CFG, JSON.stringify({ answering: { enabled: true, exclude: ['Desktop/secret-project'] }, cockpit: { targets: [{ id: 'home', folder: '.' }, { id: 'outside', folder: '/tmp' }] } }));
-const server = spawn(process.execPath, [path.join(APP, 'server.mjs')], { env: { ...process.env, AGENT_HOUSE_CONFIG: CFG, PORT: String(PORT), CLAUDE_PROJECTS: ROOT, AGENT_HOUSE_DIR: STATE, AGENT_HOUSE_PAIR_FILE: PAIR }, stdio: ['ignore', 'pipe', 'pipe'] });
+fs.writeFileSync(CFG, JSON.stringify({ answering: { enabled: true, exclude: ['Desktop/secret-project'] }, cockpit: { targets: [{ id: 'home', folder: '.' }, { id: 'outside', folder: '/tmp' }] }, pilot: { targets: [{ id: 'demo', enabled: false }] } }));
+const PILOT = path.join(T, 'pilot.json');
+fs.writeFileSync(PILOT, JSON.stringify({ targets: [{ id: 'demo', folder: 'Documents' }], refused: ['Desktop'], refusePatterns: ['secret'] }));
+const server = spawn(process.execPath, [path.join(APP, 'server.mjs')], { env: { ...process.env, AGENT_HOUSE_PILOT_TEST: `refused=${path.join(HOME, 'Desktop')}`, AGENT_HOUSE_PILOT_FILE: PILOT, AGENT_HOUSE_CONFIG: CFG, PORT: String(PORT), CLAUDE_PROJECTS: ROOT, AGENT_HOUSE_DIR: STATE, AGENT_HOUSE_PAIR_FILE: PAIR }, stdio: ['ignore', 'pipe', 'pipe'] });
 let sse;
 try {
   for (let i = 0; i < 100; i++) { const r = await req('GET', '/api/state'); if (r.status === 200 && JSON.parse(r.body).ready) break; await sleep(100); }
@@ -114,7 +116,7 @@ try {
   for (const [name, p] of [
     ['Bash', base({ tool_name: 'Bash', tool_input: { command: 'ls' } })],
     ['WebFetch', base({ tool_name: 'WebFetch', tool_input: { url: 'https://example.com' } })],
-    ['excluded project session (cwd moved away)', base({ session_id: RELAY_SID, transcript_path: relayTp, cwd: PROJ })],
+    ['excluded project session (cwd moved away)', base({ session_id: EXCL_SID, transcript_path: exclTp, cwd: PROJ })],
     ['.env file', base({ tool_input: { file_path: path.join(PROJ, '.env') } })],
     ['faked session id', base({ session_id: 'cccccccc-1111-2222-3333-444444444444' })],
   ]) { h = runHook(p); out = await h.done; ok(out === '' && Date.now() - h.t0 < 3000, `never answerable: ${name}`); }
@@ -134,6 +136,16 @@ try {
   ok(Array.isArray(list.targets) && !list.targets.some((t) => t.id === 'home' || t.id === 'outside'), 'cockpit: home folder and folders outside home are not targets');
   ok((await req('POST', '/api/chat/send', { headers: { ...chatH, cookie }, body: JSON.stringify({ target: 'home', text: 'hi' }) })).status === 409, 'cockpit: sending to a refused folder fails');
   ok((await req('POST', '/api/chat/send', { headers: { ...chatH, cookie, origin: 'https://evil.example' }, body: JSON.stringify({ target: 'team', text: 'hi' }) })).status === 403, 'cockpit: wrong Origin is refused');
+
+  // 7c. House-owned project conversations: paired only, pilot targets only, refused folders never, control files never.
+  ok((await req('POST', '/api/project/send', { headers: chatH, body: JSON.stringify({ target: 'demo', text: 'hi' }) })).status === 403, 'pilot: unpaired send is refused');
+  ok((await req('POST', '/api/project/send', { headers: { ...chatH, cookie }, body: JSON.stringify({ target: 'demo', text: 'hi' }) })).status === 409, 'pilot: a disabled or non-pilot target is refused');
+  ok((await req('POST', '/api/project/send', { headers: { ...chatH, cookie }, body: JSON.stringify({ target: 'refused', text: 'hi' }) })).status === 409, 'pilot: a refused folder is refused even as a test target');
+  ok((await req('POST', '/api/project/send', { headers: { ...chatH, cookie, origin: 'https://evil.example' }, body: JSON.stringify({ target: 'demo', text: 'hi' }) })).status === 403, 'pilot: wrong Origin is refused');
+  const pst = JSON.parse((await req('GET', '/api/state')).body);
+  ok(Array.isArray(pst.pilot) && !pst.pilot.some((t) => t.id === 'refused' || t.id === 'demo'), 'pilot: refused and disabled folders never appear as pilot targets');
+  h = runHook(base({ tool_name: 'Write', tool_input: { file_path: path.join(PROJ, '.claude', 'settings.local.json') } })); out = await h.done;
+  ok(out === '' && Date.now() - h.t0 < 3000, 'never answerable: writing a control file (.claude/settings)');
 
   // 8. The log has tool and path only.
   const log = fs.readFileSync(path.join(STATE, 'answers.log'), 'utf8');

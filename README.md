@@ -90,6 +90,17 @@ A chat panel on the page sends your message to an agent and streams the reply ba
 - Each run has a dollar cap (`cockpit.budgetUsd`, default 1), a 30-minute timeout and an output cap, and Stop ends it. At most 3 runs at once and 20 an hour.
 - It only works from the paired browser, and only when you started the server yourself in a terminal. Claude Code can't type into a terminal session that's already open, so the page runs its own sessions.
 
+## Run a project's conversation from the page (pilot)
+
+For a small set of **pilot projects**, the house owns the project's main conversation. In "Needs you", each pilot project gets a reply box, and its inbox cards get an **Answer** control: pick a letter, check "27: B" and the project name, press Send.
+
+- Pilot projects are listed in `pilot.local.json` next to `server.mjs` (git-ignored). Copy `pilot.example.json` to start: `targets` are the projects (folders relative to your home), `refused` are folders the house never runs in, and `refusePatterns` are folder-name patterns it never runs in. With no file, there are no pilot projects. Config `pilot.targets` can rename or disable a target, never add one.
+- Each message runs one headless turn of the same session (`claude -p --resume`), with the normal tool set in `manual` permission mode. Permission prompts reach the page through the hook. Anything it doesn't allow is refused, and shell commands always stay in the terminal.
+- One turn at a time per project. If the conversation is open in a terminal (`claude agents --json`), the house won't send to it. Open it yourself with `claude --resume <id>` when the house isn't mid-turn.
+- Messages can't start with `/`, `!` or `-`. Inbox answers are only a number and a letter. 1 message per 3 s per project, 60 an hour, a dollar cap per turn (`pilot.budgetUsd`, default 2).
+- `~/.claude`, `~/.agent-house`, your home folder, the `refused` folders and `answering.exclude` are never runnable, whatever the config says. The page can never approve edits to control files (`.claude/`, `.git/`, `CLAUDE.md`, `AGENTS.md`, `.mcp.json`, `settings*.json`).
+- If Claude Code's sign-in has expired, the page says so: run `claude auth login`.
+
 ## Tests
 
 ```

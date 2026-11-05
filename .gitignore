@@ -5,3 +5,5 @@ agent-house.config.json
 docs/private/
 # your own character sprites (served at /characters.json)
 characters.local.json
+# your own pilot projects for house-run conversations (see pilot.example.json)
+pilot.local.json
