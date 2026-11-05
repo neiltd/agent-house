@@ -1152,7 +1152,10 @@ function drawControlCrew(t) {
     const post = (sp) => { // at their post: their free-time loop (FRIDAY in an armchair)
       let fy2 = sp.y;
       if (l.key === 'friday' && spriteOf(l)) { rect('#5b3b5e', sp.x - 8, sp.y - 14, 16, 14); rect('#6e4a72', sp.x - 7, sp.y - 8, 14, 3); fy2 = sp.y - 6; }
-      const top = drawPerson(c, sp.x, fy2, t, { still: true, kind: 'free' }); text(String(l.name || l.key).toUpperCase(), sp.x, top - 9, l.holo, 'center');
+      const top = drawPerson(c, sp.x, fy2, t, { still: true, kind: 'free' });
+      // in the turret the name goes under her, so it doesn't touch the window frame
+      const inTurret = theme() === 'dream' && DG && sp === spots[2];
+      text(String(l.name || l.key).toUpperCase(), sp.x, inTurret ? sp.y + 4 : top - 9, l.star || l.holo || '#f1e8d4', 'center');
     };
     const keyed = { jarvis: 0, friday: 1, edith: 2 }; const mySpot = spots[keyed[l.key] ?? k] || spots[k];
     if (!busy.length) return post(mySpot);
@@ -1166,7 +1169,7 @@ function drawControlCrew(t) {
     const fade = reduce ? 1 : Math.min(1, u / 0.08, (1 - u) / 0.08);
     ctx.save(); ctx.globalAlpha = Math.max(0, fade);
     const prev = ctx.globalAlpha, top = drawPerson(c, x, fy, t, { still: true }); ctx.globalAlpha = prev;
-    text(String(l.name || l.key).toUpperCase(), x, top - 9, l.holo, 'center');
+    text(String(l.name || l.key).toUpperCase(), x, top - 9, l.star || l.holo || '#f1e8d4', 'center');
     ctx.restore();
   });
 }
@@ -1264,7 +1267,7 @@ function drawRoomView(r, t) {
     if (p <= 0) return;
     const x = Math.round(VW - 8 - (VW - 8 - spot) * (1 - Math.pow(1 - p, 2)));
     const topY = drawPerson({ look: l }, x, fy, t, { hi: true, still: p >= 1, kind: p >= 1 ? 'pose' : 'walk', face: -1 });
-    text(String(l.name || l.key).toUpperCase(), x, topY - 9, l.holo, 'center');
+    text(String(l.name || l.key).toUpperCase(), x, topY - 9, l.star || l.holo || '#f1e8d4', 'center');
     if (p >= 1) { const msg = `${String(l.name || l.key).toUpperCase()}: ${says[k]}`, bw = pxw(msg) + 10, by = 24 + k * 12; rect('rgba(8,10,24,.85)', 70, by, bw, 10); rect(l.holo, 70, by, 2, 10); text(msg, 76, by + 1, '#f1e8d4'); }
   });
 }
@@ -1334,7 +1337,7 @@ function draw(t) {
   for (const c of chars.values()) drawChar(c, t);
   const total = snap.projects.reduce((s, p) => s + val(p).w, 0) || 1;
   for (const r of rooms) {
-    const lit = [...chars.values()].some((c) => c.room === r && c.a.state !== 'idle');
+    const lit = (r.staff && teamList().some((l) => !l.holo && !l.star)) || [...chars.values()].some((c) => c.room === r && c.a.state !== 'idle'); // the Staff room stays warm while the team relaxes there
     if (!lit) { ctx.fillStyle = 'rgba(6,8,22,.5)'; ctx.fillRect(r.x, r.y, r.w, r.h); }
     else { const cx = r.x + r.w / 2, g = ctx.createRadialGradient(cx, r.y + 10, 2, cx, r.y + 10, r.w * .6); g.addColorStop(0, 'rgba(255,210,122,.22)'); g.addColorStop(1, 'rgba(255,210,122,0)'); ctx.fillStyle = g; ctx.fillRect(r.x, r.y, r.w, r.h); }
     if (ui.sel?.kind === 'room' && ui.sel.id === r.id) { ctx.strokeStyle = '#ffd27a'; ctx.lineWidth = 1; ctx.strokeRect(r.x + .5, r.y + .5, r.w - 1, r.h - 1); }
