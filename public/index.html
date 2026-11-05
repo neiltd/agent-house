@@ -243,7 +243,6 @@ const PALETTE = ['#3aa39b', '#d65a7a', '#8e86d8', '#6fb7c9', '#c9a227', '#5a9a4a
 const WALLS = [['#2c5e5a','#336b66','stripe'],['#363c69','#424a7e','dots'],['#7a3940','#86434a','diamond'],['#4a4846','#55524f','brick'],['#3e5a34','#47663c','stripe'],['#5b3f6b','#674a78','dots'],['#5a4632','#634e39','panel'],['#304f6e','#395b7c','diamond']];
 const hash = (s) => { let h = 0; for (const c of String(s)) h = (h * 31 + c.charCodeAt(0)) >>> 0; return h; };
 const projColor = (id) => (snap && snap.colors && snap.colors[id]) || FIXED[id] || PALETTE[hash(id) % PALETTE.length];
-const TEAM = { mark:'#3d6fb6', kai:'#5a7d3a', andrea:'#c4507a', claires:'#8e5fc0', raphael:'#e3a72f', explore:'#6fb7c9', plan:'#9aa3b5', 'general-purpose':'#7a83ad', 'main session':'#e8dcc0' };
 /* ---------- characters: each named teammate has one look everywhere (config "characters") ---------- */
 const lookOf = (label) => {
   const all = (snap && snap.characters) || {}; let k = String(label || '').toLowerCase(), l = all[k], guard = 0;
@@ -251,7 +250,7 @@ const lookOf = (label) => {
   return l ? { key: k, ...l } : null;
 };
 const teamList = () => Object.entries((snap && snap.characters) || {}).filter(([, l]) => !l.alias && l.team !== false).map(([k, l]) => ({ key: k, ...l }));
-const agentColor = (label) => TEAM[String(label).toLowerCase()] || PALETTE[hash(label) % PALETTE.length];
+const agentColor = (label) => PALETTE[hash(label) % PALETTE.length];
 const HAIR = ['#1c1c1c', '#3b2416', '#7a3b1c', '#d9b36a', '#2a1a10', '#cfcfcf'];
 const SKIN = ['#e0b48a', '#c98e66', '#b8805a', '#d6a57a', '#f0c9a0'];
 
