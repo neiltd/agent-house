@@ -292,7 +292,7 @@ function computeLayout() {
   // The house has a fixed, irregular floor plan (like a real mansion): floors differ in width, height and setback.
   // Rooms fill the plan in order; usage never changes a room's size. When the plan is full the pattern repeats.
   const PLAN = [
-    { x0: 24, x1: 456, h: 72, r: [1.25, 1, 1, 1.15] },   // top floor, full width under the roof
+    { x0: 48, x1: 432, h: 72, r: [1.2, 1, 1.2] },        // top floor, narrower: the house rises like a tower
     { x0: 24, x1: 404, h: 64, r: [1, 1.35, 1] },         // set back on the right (terrace)
     { x0: 56, x1: 456, h: 80, r: [0.9, 1.3, 1] },        // set back on the left, tall
     { x0: 24, x1: 456, h: 68, r: [1, 0.8, 1, 1.2, 0.9] }, // five smaller rooms
@@ -438,9 +438,14 @@ const stars = Array.from({ length: 70 }, (_, i) => ({ x: (i * 97) % W, y: (i * 3
 function drawWorld(t) {
   drawSky(t);
   rect('#2e2119', 0, groundY + 4, W, H - TOP() - groundY);
-  rect('#3f6b3a', 0, groundY - 1, 480, 5); rect('#4f8447', 0, groundY - 1, 480, 1);
-  rect('#8a8f9c', 476, groundY - 1, W - 476, 4); rect('#3a3d47', 476, groundY + 3, W - 476, 12);
-  for (let x = 482; x < W; x += 14) rect('#d9c46a', x, groundY + 8, 7, 1);
+  if (theme() === 'victorian') {
+    drawGrounds(t);
+    rect('#8d8a7e', 476, groundY + 3, W - 476, 6); rect('#a19e92', 476, groundY + 3, W - 476, 1); // gravel path to the village
+  } else {
+    rect('#3f6b3a', 0, groundY - 1, 480, 5); rect('#4f8447', 0, groundY - 1, 480, 1);
+    rect('#8a8f9c', 476, groundY - 1, W - 476, 4); rect('#3a3d47', 476, groundY + 3, W - 476, 12);
+    for (let x = 482; x < W; x += 14) rect('#d9c46a', x, groundY + 8, 7, 1);
+  }
   drawWeather(t);
   text('THE INTERNET', 624, groundY - 140, sky().phase === 'day' ? '#3d4a7a' : '#6e77a3', 'center');
   if (theme() === 'victorian') return drawVictorianBody(t);
@@ -504,7 +509,7 @@ function drawWeather(t) {
 }
 
 /* ---------- Victorian theme: a Second Empire style mansion (original pixel art) ---------- */
-const STONE = '#e6dcc6', STONE_D = '#cdbf9f', STONE_L = '#f3ecdc', TRIM = '#b9a983', SLATE = '#8c4a36', SLATE_D = '#6e3826', SLATE_L = '#a85d45';
+const STONE = '#eceae4', STONE_D = '#cfccc3', STONE_L = '#fbfaf6', TRIM = '#bdb8ab', SLATE = '#8c4a36', SLATE_D = '#6e3826', SLATE_L = '#a85d45';
 function drawVictorianBody(t) {
   // stone around each floor, so setbacks and narrower floors show in the outline
   floors.forEach((f, i) => {
@@ -534,22 +539,32 @@ function drawVictorianBody(t) {
       rect(STONE_D, bx + 4, f.y + 14 + Math.round(wh / 2), 4, 1); rect(TRIM, bx + 2, f.y + 15 + wh, 8, 2); rect(STONE_L, bx + 5, f.y + 9, 2, 3);
     }
   });
+  const tint = nightTint();
+  if (tint) { ctx.fillStyle = tint; floors.forEach((f) => { ctx.fillRect(f.x0 - 20, f.y - 18, f.x1 - f.x0 + 40, f.h + 26); }); }
   // stone base for the basement
-  rect('#b3a585', 16, groundY + 4, 448, H - TOP() - groundY - 12); ctx.fillStyle = '#9e916f';
+  rect('#b9b6ad', 16, groundY + 4, 448, H - TOP() - groundY - 12); ctx.fillStyle = '#a5a299';
   for (let y = groundY + 8; y < H - TOP() - 8; y += 7) ctx.fillRect(16, y, 448, 1);
+}
+/** Trees around the house and a lawn with a path to the village of internet places. */
+function drawGrounds(t) {
+  const night = sky().phase === 'night', leaf = night ? '#13241c' : '#2f5a3a', leaf2 = night ? '#1a3126' : '#3c6e47', trunk = night ? '#1d1510' : '#4a3424';
+  const tree = (x, h, r) => { rect(trunk, x - 1, groundY - h, 3, h); for (const [dx, dy, rr] of [[0, -h, r], [-r * 0.6, -h + r * 0.5, r * 0.8], [r * 0.6, -h + r * 0.4, r * 0.8]]) { ctx.fillStyle = leaf; ctx.beginPath(); ctx.arc(x + dx, groundY + dy, rr, 0, Math.PI * 2); ctx.fill(); } ctx.fillStyle = leaf2; ctx.beginPath(); ctx.arc(x - r * 0.3, groundY - h - r * 0.3, r * 0.5, 0, Math.PI * 2); ctx.fill(); };
+  for (const [x, h, r] of [[8, 70, 22], [30, 46, 16], [470, 54, 18], [500, 80, 24], [748, 64, 20], [730, 40, 14]]) tree(x, h, r);
+  rect(night ? '#1c3324' : '#3f7a45', 0, groundY - 1, W, 5); rect(night ? '#24402c' : '#56924f', 0, groundY - 1, W, 1);
 }
 function drawVictorianRoof(t) {
   // mansard: steep sides, shingles, a flat cap with iron cresting
-  ctx.fillStyle = SLATE; ctx.beginPath(); ctx.moveTo(6, 63); ctx.lineTo(34, 22); ctx.lineTo(446, 22); ctx.lineTo(474, 63); ctx.closePath(); ctx.fill();
-  ctx.fillStyle = SLATE_D; for (let y = 26; y < 62; y += 4) { const inset = Math.round((63 - y) * 28 / 41); ctx.fillRect(6 + inset, y, 468 - 2 * inset, 1); }
+  const roofPath = () => { ctx.beginPath(); ctx.moveTo(28, 63); ctx.lineTo(48, 22); ctx.lineTo(432, 22); ctx.lineTo(452, 63); ctx.closePath(); };
+  ctx.fillStyle = SLATE; roofPath(); ctx.fill();
+  ctx.fillStyle = SLATE_D; for (let y = 26; y < 62; y += 4) { const inset = Math.round((63 - y) * 20 / 41); ctx.fillRect(28 + inset, y, 424 - 2 * inset, 1); }
   // cutaway into the roof: the control room and attic inside
-  rect('#2b1f17', 40, 27, 400, 34); rect(SLATE_L, 34, 22, 412, 2); rect(TRIM, 4, 60, 472, 3); rect(STONE_L, 4, 60, 472, 1);
-  for (let x = 36; x < 446; x += 6) { rect('#2a2a30', x, 18, 1, 4); rect('#2a2a30', x - 1, 17, 3, 1); }
-  rect('#2a2a30', 34, 20, 412, 1);
+  rect('#2b1f17', 56, 27, 368, 34); rect(SLATE_L, 48, 22, 384, 2); rect(TRIM, 26, 60, 428, 3); rect(STONE_L, 26, 60, 428, 1);
+  for (let x = 50; x < 432; x += 6) { rect('#2a2a30', x, 18, 1, 4); rect('#2a2a30', x - 1, 17, 3, 1); }
+  rect('#2a2a30', 48, 20, 384, 1);
   // dormers on the sloped ends
-  for (const dx of [16, 452]) { rect(STONE, dx, 40, 12, 14); rect('#ffd27a', dx + 3, 44, 6, 8); rect(STONE_D, dx + 5, 44, 1, 8); ctx.fillStyle = SLATE_L; ctx.beginPath(); ctx.moveTo(dx - 2, 41); ctx.lineTo(dx + 6, 33); ctx.lineTo(dx + 14, 41); ctx.closePath(); ctx.fill(); }
+  for (const dx of [32, 436]) { rect(STONE, dx, 40, 12, 14); rect('#ffd27a', dx + 3, 44, 6, 8); rect(STONE_D, dx + 5, 44, 1, 8); ctx.fillStyle = SLATE_L; ctx.beginPath(); ctx.moveTo(dx - 2, 41); ctx.lineTo(dx + 6, 33); ctx.lineTo(dx + 14, 41); ctx.closePath(); ctx.fill(); }
   // the turret, with a cone roof and a weathervane that turns while anyone is working
-  const tx = 400;
+  const tx = 240; // the turret sits on top, in the middle, like the tower in a real mansion
   rect(STONE, tx - 12, 12, 24, 15); rect(STONE_D, tx + 10, 12, 2, 15); rect(TRIM, tx - 13, 25, 26, 2);
   for (const wx of [tx - 8, tx + 3]) { rect('#3a3324', wx, 15, 5, 8); rect('#ffd27a', wx + 1, 16, 3, 6); }
   ctx.fillStyle = SLATE; ctx.beginPath(); ctx.moveTo(tx - 15, 13); ctx.lineTo(tx, -4); ctx.lineTo(tx + 15, 13); ctx.closePath(); ctx.fill();
@@ -559,7 +574,10 @@ function drawVictorianRoof(t) {
   rect('#2a2a30', tx, -2, 1, 4);
   if (turn % 2 === 0) rect('#2a2a30', tx - 3, -1, 7, 1); else rect('#2a2a30', tx - 1, -1, 3, 1);
   rect('#e3a72f', turn < 2 ? tx + 3 : tx - 3, -1, 1, 1);
+  const tint = nightTint(); if (tint) { ctx.fillStyle = tint; roofPath(); ctx.fill(); ctx.fillRect(tx - 15, -4, 30, 31); }
 }
+/** How much the night darkens the outside of the house (lit rooms are drawn on top, so they glow). */
+function nightTint() { const ph = sky().phase; return ph === 'night' ? 'rgba(14,22,48,.5)' : ph === 'dusk' || ph === 'dawn' ? 'rgba(40,30,70,.25)' : ''; }
 function drawVictorianDoor() {
   // grand steps up to an arched front door (agents leave here for the street)
   const x = 466;
