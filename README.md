@@ -47,6 +47,7 @@ Copy `agent-house.config.example.json` to `agent-house.config.json` and edit it.
 | `characters` | Give named subagents one look everywhere, keyed by agent name: `{ "reviewer": { "name": "Robin", "role": "Code review", "body": "#2f6b4f", "hair": "#1c1c1c", "skin": "#e0b48a", "extra": "glasses" } }`. Use `"holo": "<colour>"` to draw a hologram, and `"alias": "<other key>"` for an old name. Extras: glasses, tie, hood, vest, beret, ponytail, longhair, headset, visor, shield, book, clipboard, magnifier (`accent` sets their colour). Teammates who aren't working sit in the Staff Room; holograms wait in the Control Room. A Team panel shows where everyone is. |
 | `weather` | `{ "lat": 34.05, "lon": -118.24, "place": "Los Angeles", "units": "c" }` turns on live weather: the sky follows real sunrise and sunset, with clouds, rain, storms, snow and fog. The server asks [Open-Meteo](https://open-meteo.com) every 15 minutes, sending only these coordinates. It's the only outbound call the house makes, and it's off unless you set it. |
 | `theme` | `"classic"` (default) or `"victorian"`: a stone mansion with bay towers, a mansard roof with dormers, and a turret whose weathervane turns while agents work. |
+| `cockpit` | `{ "budgetUsd": 1, "targets": [...] }` for the chat panel. See "Talk to your agents". |
 | `answering` | `{ "enabled": true, "waitSeconds": 45, "exclude": ["Desktop/sensitive-project"] }`. See below. |
 
 ## Answering from the page (optional)
@@ -78,6 +79,15 @@ To set it up:
 The hook logs one line per run to `~/.agent-house/hook-runs.log` and one per answer to `~/.agent-house/answers.log`: tool and path only, never content. If you run Claude Code in auto mode, permission prompts are rare, so mostly questions and plans will reach the page.
 
 Use a browser profile with no extensions for the house page, and don't give browser-automation tools access to `127.0.0.1:4317`. Anything that can click on the page can answer for you.
+
+## Talk to your agents (optional)
+
+A chat panel on the page sends your message to an agent and streams the reply back, so you don't switch between terminals. Pick a target, type, press Send (or Cmd+Enter). Follow-ups continue the same conversation. Runs show up in the house like any other session, and you can click them to read their notebook.
+
+- Targets come only from `cockpit.targets` in your config: `{ "id": "my-app", "name": "My App", "folder": "Desktop/my-app", "agent": "optional-agent-name" }`. Your home folder, `~/.claude`, `~/.agent-house` and any `answering.exclude` folder are always refused.
+- Version 1 is **read-only**: agents can read, search and answer, not change files. Anything that would need permission is refused automatically.
+- Each run has a dollar cap (`cockpit.budgetUsd`, default 1), a 30-minute timeout and an output cap, and Stop ends it. At most 3 runs at once and 20 an hour.
+- It only works from the paired browser, and only when you started the server yourself in a terminal. Claude Code can't type into a terminal session that's already open, so the page runs its own sessions.
 
 ## Tests
 

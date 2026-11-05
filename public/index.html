@@ -114,6 +114,20 @@ details.done li{display:flex;gap:8px;align-items:baseline}
 .live .left{font-family:var(--f-mono);font-size:11.5px;color:var(--dim)}
 .live .msg2{font-size:12px;color:var(--mustard);margin-top:6px}
 .pairnote{font-size:12.5px;color:var(--muted);margin:0 0 8px;padding:8px 10px;border-radius:5px;background:var(--night);border:1px dashed var(--line)}
+.chat-pick{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0;font-size:12.5px;color:var(--muted)}
+.chat-pick select{font:inherit;background:var(--night);color:var(--ink);border:1px solid var(--line);border-radius:5px;padding:3px 6px;max-width:220px}
+.chat-log{list-style:none;margin:0;padding:0;display:grid;gap:6px;max-height:340px;overflow:auto}
+.chat-log li{font-size:13px;padding:7px 9px;border-radius:6px;background:var(--panel-2);white-space:pre-wrap;overflow-wrap:anywhere}
+.chat-log li.you{background:var(--night);border-left:2px solid var(--dim)}
+.chat-log li.text{border-left:2px solid var(--mustard)}
+.chat-log li.tool{font-family:var(--f-mono);font-size:11.5px;color:var(--muted);padding:3px 9px;background:none}
+.chat-log li.error{border-left:2px solid var(--alert);color:var(--alert)}
+.chat-log li.done{font-size:11.5px;color:var(--dim);background:none;padding:2px 9px}
+#chat-form textarea{width:100%;box-sizing:border-box;margin-top:8px;font:inherit;background:var(--night);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:7px 9px;resize:vertical}
+#chat-form textarea:focus-visible,#chat-form button:focus-visible,.chat-pick select:focus-visible{outline:2px solid var(--mustard);outline-offset:1px}
+.chat-btns{display:flex;gap:8px;align-items:center;margin-top:6px;font-size:12px}
+.chat-btns button{font:inherit;font-weight:600;font-size:13px;border-radius:5px;padding:5px 14px;cursor:pointer;border:1px solid var(--line);background:var(--mustard);color:#1b1b1b}
+.chat-btns #chat-stop{background:var(--panel-2);color:var(--ink)}
 .inbox{margin-top:10px;border-radius:5px;background:var(--panel-2);border-left:3px solid var(--mustard)}
 .inbox summary{cursor:pointer;list-style:none;padding:9px 11px;display:flex;flex-wrap:wrap;gap:2px 8px;align-items:center;font-size:12.5px;color:var(--muted)}
 .inbox summary::-webkit-details-marker{display:none}
@@ -186,6 +200,20 @@ code{font-family:var(--f-mono);font-size:12.5px;color:var(--ink);background:var(
     </section>
 
     <aside>
+      <section class="card" id="chat-card" aria-labelledby="chat-h">
+        <div class="card-head"><h2 id="chat-h">Talk to your agents</h2></div>
+        <p class="pairnote" id="chat-note" hidden></p>
+        <div class="chat-pick" id="chat-pick" hidden>
+          <label>To <select id="chat-target"></select></label>
+          <label>In <select id="chat-conv"><option value="">New conversation</option></select></label>
+        </div>
+        <ol class="chat-log" id="chat-log" aria-live="polite"></ol>
+        <form id="chat-form" hidden>
+          <textarea id="chat-text" rows="2" placeholder="Ask anything. Read-only for now: they can look, search and answer, not change files."></textarea>
+          <div class="chat-btns"><button type="submit" id="chat-send">Send</button><button type="button" id="chat-stop" hidden>Stop</button><span class="muted" id="chat-status"></span></div>
+        </form>
+      </section>
+
       <section class="card" id="mail-card" aria-labelledby="mail-h">
         <div class="card-head"><h2 id="mail-h">Needs you</h2><span class="count zero" id="mail-count">0</span></div>
         <p class="pairnote" id="pairnote" hidden></p>
@@ -949,9 +977,62 @@ function draw(t) {
   drawControlCrew(t);
 }
 
+/* ---------- cockpit chat (read-only v1) ---------- */
+const chat = { conv: '', polling: null };
+async function chatList() {
+  if (!me.paired) return;
+  try {
+    const r = await fetch('/api/chat/list', { credentials: 'same-origin' }); if (!r.ok) return;
+    const j = await r.json();
+    const tSel = $('chat-target'), keepT = tSel.value;
+    tSel.innerHTML = j.targets.map((t) => `<option value="${esc(t.id)}">${esc(t.name)}</option>`).join(''); if (keepT) tSel.value = keepT;
+    const cSel = $('chat-conv');
+    cSel.innerHTML = '<option value="">New conversation</option>' + j.conversations.map((c) => `<option value="${esc(c.id)}">${esc((j.targets.find((t) => t.id === c.target)?.name || c.target) + ': ' + c.title)}${c.running ? ' (working)' : ''}</option>`).join('');
+    cSel.value = chat.conv;
+    $('chat-pick').hidden = false; $('chat-form').hidden = !j.targets.length;
+    if (!j.targets.length) { $('chat-note').hidden = false; $('chat-note').textContent = 'Add folders to "cockpit.targets" in agent-house.config.json to talk to agents here.'; }
+  } catch {}
+}
+async function chatPoll() {
+  clearTimeout(chat.polling);
+  if (!chat.conv) { $('chat-log').innerHTML = ''; $('chat-stop').hidden = true; return; }
+  try {
+    const r = await fetch('/api/chat/events?id=' + encodeURIComponent(chat.conv), { credentials: 'same-origin' }); const j = await r.json();
+    const log = $('chat-log'), atEnd = log.scrollTop + log.clientHeight >= log.scrollHeight - 20;
+    log.innerHTML = (j.events || []).map((e) => {
+      if (e.type === 'tool') return `<li class="tool">· ${esc(e.tool)} ${esc(e.text || '')}</li>`;
+      if (e.type === 'done') return e.text ? `<li class="error">${esc(e.text)}</li>` : `<li class="done">Done${e.costUsd ? ` · $${Number(e.costUsd).toFixed(3)}` : ''}</li>`;
+      return `<li class="${esc(e.type)}">${esc(e.text)}</li>`;
+    }).join('');
+    if (atEnd) log.scrollTop = log.scrollHeight;
+    $('chat-stop').hidden = !j.running; $('chat-send').disabled = !!j.running; $('chat-status').textContent = j.running ? 'Working…' : '';
+    chat.polling = setTimeout(chatPoll, j.running ? 1000 : 6000);
+  } catch { chat.polling = setTimeout(chatPoll, 4000); }
+}
+$('chat-conv').addEventListener('change', (e) => { chat.conv = e.target.value; chatPoll(); });
+$('chat-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const text = $('chat-text').value.trim(); if (!text) return;
+  $('chat-send').disabled = true; $('chat-status').textContent = 'Sending…';
+  try {
+    const r = await fetch('/api/chat/send', { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text, target: $('chat-target').value, conversation: chat.conv || undefined }) });
+    const j = await r.json();
+    if (!r.ok) { $('chat-status').textContent = 'Not sent: ' + (j.error || r.status); $('chat-send').disabled = false; return; }
+    $('chat-text').value = ''; chat.conv = j.conversation; await chatList(); $('chat-conv').value = chat.conv; chatPoll();
+  } catch { $('chat-status').textContent = 'Not sent: the server did not answer.'; $('chat-send').disabled = false; }
+});
+$('chat-text').addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) $('chat-form').requestSubmit(); });
+$('chat-stop').addEventListener('click', async () => { await fetch('/api/chat/stop', { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: chat.conv }) }); chatPoll(); });
+function chatSetup() {
+  const n = $('chat-note');
+  if (!me.canPair) { n.hidden = false; n.textContent = 'Start the server yourself in a terminal to talk to agents here.'; return; }
+  if (!me.paired) { n.hidden = false; n.textContent = 'Open the pairing link from the server terminal to talk to agents here.'; return; }
+  n.hidden = true; chatList(); setInterval(chatList, 15000);
+}
+
 /* ---------- panel ---------- */
 const me = { paired: false, answering: false, canPair: false };
-fetch('/api/me', { credentials: 'same-origin' }).then((r) => r.json()).then((m) => { Object.assign(me, m); renderLive(true); }).catch(() => {});
+fetch('/api/me', { credentials: 'same-origin' }).then((r) => r.json()).then((m) => { Object.assign(me, m); renderLive(true); chatSetup(); }).catch(() => {});
 const liveSessions = () => new Set((snap.live || []).map((a) => a.sessionId));
 function renderLive(force = false) {
   const live = snap.live || [];

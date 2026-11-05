@@ -52,5 +52,21 @@
     "old-name": {
       "alias": "reviewer"
     }
+  },
+  "cockpit": {
+    "budgetUsd": 1,
+    "targets": [
+      {
+        "id": "helper",
+        "name": "Assistant",
+        "folder": "Desktop/my-app",
+        "agent": "helper"
+      },
+      {
+        "id": "my-app",
+        "name": "My App",
+        "folder": "Desktop/my-app"
+      }
+    ]
   }
 }

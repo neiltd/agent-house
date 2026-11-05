@@ -12,6 +12,7 @@ import { projectFor, DEFAULT_RULES } from './lib/classify.mjs';
 import { parseInbox } from './lib/inbox.mjs';
 import { createDesk, checkHookPayload, mask } from './lib/answer.mjs';
 import crypto from 'node:crypto';
+import { startClaude } from './lib/runners/claude.mjs';
 
 const HOME = os.homedir();
 const ROOT = process.env.CLAUDE_PROJECTS || path.join(HOME, '.claude', 'projects');
@@ -270,6 +271,56 @@ function assignRooms(snap) {
   return roomSlots;
 }
 
+// ---------- cockpit: talk to agents from the page (docs/private/cockpit-design.md + Kai's review) ----------
+// v1 is read-only. Targets come only from config "cockpit.targets"; each folder is checked with realpath.
+const CONV_FILE = path.join(STATE_DIR, 'conversations.json');
+const convs = new Map(); // id -> { id, target, sessionId, title, created, updated, events: [], run }
+try { for (const c of JSON.parse(fs.readFileSync(CONV_FILE, 'utf8'))) convs.set(c.id, { ...c, events: [], run: null }); } catch {}
+const saveConvs = () => { try { fs.writeFileSync(CONV_FILE, JSON.stringify([...convs.values()].map(({ events, run, ...c }) => c), null, 1), { mode: 0o600 }); } catch {} };
+function cockpitTargets() {
+  const out = [];
+  const banned = [HOME, path.join(HOME, '.claude'), STATE_DIR, ...excludeDirs()].map((d) => { try { return fs.realpathSync(d); } catch { return d; } });
+  for (const t of (config.cockpit && config.cockpit.targets) || []) {
+    if (!t || typeof t.id !== 'string' || typeof t.folder !== 'string') continue;
+    let dir; try { dir = fs.realpathSync(path.resolve(HOME, t.folder)); } catch { continue; }
+    if (!dir.startsWith(HOME + path.sep) || banned.some((b) => dir === b || dir.startsWith(b + path.sep)) || !fs.statSync(dir).isDirectory()) continue;
+    out.push({ id: t.id, name: String(t.name || t.id), dir, agent: typeof t.agent === 'string' && /^[a-z0-9-]+$/.test(t.agent) ? t.agent : null });
+  }
+  return out;
+}
+const running = () => [...convs.values()].filter((c) => c.run).length;
+let runTimes = [];
+function chatSend(body) {
+  const text = typeof body.text === 'string' ? body.text.trim() : '';
+  if (!text || text.length > 8000) return { ok: false, error: 'message must be 1-8000 characters' };
+  const targets = cockpitTargets();
+  let c = body.conversation ? convs.get(String(body.conversation)) : null;
+  if (body.conversation && !c) return { ok: false, error: 'no such conversation' };
+  const target = targets.find((t) => t.id === (c ? c.target : body.target));
+  if (!target) return { ok: false, error: 'that target is not in cockpit.targets (or its folder is not allowed)' };
+  if (c && c.run) return { ok: false, error: 'this conversation is still running' };
+  if (c && c.updated && Date.now() - c.updated < 2000) return { ok: false, error: 'slow down a little' };
+  runTimes = runTimes.filter((t) => Date.now() - t < 3600e3);
+  if (runTimes.length >= 20) return { ok: false, error: 'limit: 20 runs an hour' };
+  if (running() >= 3) return { ok: false, error: 'limit: 3 runs at once' };
+  if (!c) { const id = crypto.randomBytes(8).toString('hex'); c = { id, target: target.id, sessionId: null, title: mask(text.replace(/\s+/g, ' ').slice(0, 60)), created: Date.now(), updated: Date.now(), events: [], run: null }; convs.set(id, c); }
+  runTimes.push(Date.now());
+  c.updated = Date.now();
+  const push = (ev) => { c.events.push({ ts: Date.now(), ...ev }); if (c.events.length > 300) c.events.splice(0, c.events.length - 300); };
+  push({ type: 'you', text });
+  c.run = startClaude({ cwd: target.dir, text, agent: target.agent, resume: c.sessionId, budgetUsd: Number(config.cockpit?.budgetUsd) || 1,
+    onEvent: (ev) => {
+      if (ev.type === 'session' && ev.sessionId) { c.sessionId = ev.sessionId; saveConvs(); return; }
+      if (ev.sessionId) c.sessionId = ev.sessionId;
+      push(ev);
+      if (ev.type === 'done' || ev.type === 'error') { c.run = null; c.updated = Date.now(); saveConvs(); }
+    } });
+  saveConvs();
+  return { ok: true, conversation: c.id };
+}
+process.on('exit', () => { for (const c of convs.values()) if (c.run) c.run.stop(); });
+for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => process.exit(0));
+
 // ---------- http ----------
 const clients = new Map(); // res -> { paired }
 let lastJson = '';
@@ -345,6 +396,19 @@ async function pageAnswer(req, res) {
   json(res, r.ok ? 200 : 409, r);
 }
 
+/** Cockpit endpoints: paired browser only, same checks as answering. */
+async function cockpit(req, res, url) {
+  if (!answeringOn()) return json(res, 403, { error: 'the cockpit needs the server started from a terminal' });
+  if (!isPaired(req)) return json(res, 403, { error: 'this browser is not paired' });
+  if (url.pathname === '/api/chat/list') return json(res, 200, { targets: cockpitTargets().map(({ id, name }) => ({ id, name })), conversations: [...convs.values()].sort((a, b) => b.updated - a.updated).slice(0, 30).map(({ events, run, ...c }) => ({ ...c, running: !!run })) });
+  if (url.pathname === '/api/chat/events') { const c = convs.get(String(url.searchParams.get('id') || '')); return c ? json(res, 200, { running: !!c.run, events: c.events }) : json(res, 404, { error: 'no such conversation' }); }
+  if (req.method !== 'POST' || req.headers.origin !== `http://${req.headers.host}` || !String(req.headers['content-type'] || '').startsWith('application/json')) return json(res, 403, { error: 'forbidden' });
+  let body; try { body = JSON.parse(await readBody(req, 16 * 1024)); } catch { return json(res, 400, { error: 'bad body' }); }
+  if (url.pathname === '/api/chat/send') { const r = chatSend(body || {}); return json(res, r.ok ? 200 : 409, r); }
+  if (url.pathname === '/api/chat/stop') { const c = convs.get(String(body?.id || '')); if (c?.run) c.run.stop(); return json(res, 200, { ok: true }); }
+  return json(res, 404, { error: 'not found' });
+}
+
 const SECURITY_HEADERS = { 'x-frame-options': 'DENY', 'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer', 'cross-origin-opener-policy': 'same-origin' };
 const ALLOWED_HOSTS = new Set([`127.0.0.1:${PORT}`, `localhost:${PORT}`]);
 const server = http.createServer((req, res) => {
@@ -362,6 +426,8 @@ const server = http.createServer((req, res) => {
   } else if (url.pathname === '/api/notebook') {
     const nb = store.notebook(String(url.searchParams.get('key') || ''));
     json(res, nb ? 200 : 404, nb ? { log: nb } : { error: 'no such agent' });
+  } else if (url.pathname.startsWith('/api/chat')) {
+    cockpit(req, res, url).catch(() => { if (!res.writableEnded) json(res, 500, { error: 'server error' }); });
   } else if (url.pathname === '/api/me') {
     json(res, 200, { paired: isPaired(req), answering: answeringOn(), canPair });
   } else if (url.pathname === '/api/answer') {

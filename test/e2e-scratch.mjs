@@ -49,7 +49,7 @@ const relayTp = transcript(relayCwd, RELAY_SID);
 const base = (over) => ({ hook_event_name: 'PermissionRequest', session_id: SID, transcript_path: tp, cwd: PROJ, tool_name: 'Edit', tool_input: { file_path: path.join(PROJ, 'a.txt') }, ...over });
 
 const CFG = path.join(T, 'config.json');
-fs.writeFileSync(CFG, JSON.stringify({ answering: { enabled: true, exclude: ['Desktop/secret-project'] } }));
+fs.writeFileSync(CFG, JSON.stringify({ answering: { enabled: true, exclude: ['Desktop/secret-project'] }, cockpit: { targets: [{ id: 'home', folder: '.' }, { id: 'outside', folder: '/tmp' }] } }));
 const server = spawn(process.execPath, [path.join(APP, 'server.mjs')], { env: { ...process.env, AGENT_HOUSE_CONFIG: CFG, PORT: String(PORT), CLAUDE_PROJECTS: ROOT, AGENT_HOUSE_DIR: STATE, AGENT_HOUSE_PAIR_FILE: PAIR }, stdio: ['ignore', 'pipe', 'pipe'] });
 let sse;
 try {
@@ -125,6 +125,15 @@ try {
   ok((await waitLive(0)) !== null, 'answered in the terminal: the ask leaves the page');
   const late = await req('POST', '/api/answer', { headers: { ...jsonH, cookie, origin: `http://127.0.0.1:${PORT}` }, body: JSON.stringify({ id: live[0].id, decision: 'allow' }) });
   ok(late.status === 409 && /terminal/.test(late.body), 'late click after the terminal answered is refused');
+
+  // 7b. Cockpit: paired only, and only folders on the allow-list (home and folders outside home are refused).
+  const chatH = { 'content-type': 'application/json', origin: `http://127.0.0.1:${PORT}` };
+  ok((await req('POST', '/api/chat/send', { headers: chatH, body: JSON.stringify({ target: 'home', text: 'hi' }) })).status === 403, 'cockpit: unpaired send is refused');
+  ok((await req('GET', '/api/chat/list')).status === 403, 'cockpit: unpaired list is refused');
+  const list = JSON.parse((await req('GET', '/api/chat/list', { headers: { cookie } })).body);
+  ok(Array.isArray(list.targets) && !list.targets.some((t) => t.id === 'home' || t.id === 'outside'), 'cockpit: home folder and folders outside home are not targets');
+  ok((await req('POST', '/api/chat/send', { headers: { ...chatH, cookie }, body: JSON.stringify({ target: 'home', text: 'hi' }) })).status === 409, 'cockpit: sending to a refused folder fails');
+  ok((await req('POST', '/api/chat/send', { headers: { ...chatH, cookie, origin: 'https://evil.example' }, body: JSON.stringify({ target: 'team', text: 'hi' }) })).status === 403, 'cockpit: wrong Origin is refused');
 
   // 8. The log has tool and path only.
   const log = fs.readFileSync(path.join(STATE, 'answers.log'), 'utf8');

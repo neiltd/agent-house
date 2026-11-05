@@ -46,6 +46,16 @@ The installer adds deny rules for `Read(~/.agent-house/**)` and `Edit(~/.agent-h
 
 When anything is off (house not running, not paired, no paired page open, an excluded session, a timeout, a bad reply), the hook prints nothing and exits 0. To Claude Code that means "no decision", and it carries on with the normal terminal prompt.
 
+## The chat panel (cockpit)
+
+With `cockpit.targets` set, the paired browser can start headless Claude Code runs. They are locked down:
+
+- Only folders on the allow-list, resolved with `realpath`. Home, `~/.claude`, `~/.agent-house` and excluded folders are refused. The request never carries a path.
+- Read-only tools (`--tools Read,Glob,Grep`). Anything that would prompt is denied (`--permission-prompts none`). Only user settings load, and no MCP servers.
+- The message goes on stdin, never as an argument, so it can't be read as a command-line flag. No shell is involved.
+- A dollar cap, a 30-minute timeout, a 1 MB output cap, a minimal environment, and the whole process group is killed on Stop or exit. At most 3 at once and 20 an hour.
+- `--resume` only continues sessions the cockpit itself created. Conversation titles are masked. Chat streams go only to the paired browser.
+
 ## Reporting a problem
 
 Open an issue, or for anything sensitive, a private security advisory on the GitHub repo.
