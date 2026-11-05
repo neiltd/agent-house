@@ -223,6 +223,28 @@ function logAnswer({ ask, decision }) {
 const waitMs = () => Math.min(50, Math.max(5, Number(answerCfg().waitSeconds) || 45)) * 1000;
 let desk = createDesk({ waitMs: waitMs(), onLog: logAnswer });
 
+// ---------- weather (optional): config "weather": { "lat": 34.05, "lon": -118.24, "place": "Los Angeles" } ----------
+// The only outbound call the house makes, and only when configured. It sends just the coordinates to Open-Meteo.
+let weather = null, weatherAt = 0;
+async function refreshWeather() {
+  const w = config.weather;
+  if (!w || !Number.isFinite(Number(w.lat)) || !Number.isFinite(Number(w.lon))) { weather = null; return; }
+  if (Date.now() - weatherAt < 15 * 60e3) return;
+  weatherAt = Date.now();
+  const q = new URLSearchParams({ latitude: String(Number(w.lat)), longitude: String(Number(w.lon)), current: 'temperature_2m,weather_code,is_day,cloud_cover,wind_speed_10m,precipitation', daily: 'sunrise,sunset', timezone: 'auto', forecast_days: '1' });
+  try {
+    const r = await fetch(`https://api.open-meteo.com/v1/forecast?${q}`, { signal: AbortSignal.timeout(8000) });
+    if (!r.ok) throw new Error(String(r.status));
+    const j = await r.json(), c = j.current || {};
+    const offset = Number(j.utc_offset_seconds) || 0;
+    const local = (iso) => (iso ? Date.parse(iso + 'Z') - offset * 1000 : null); // Open-Meteo gives local times without a zone
+    weather = { place: String(w.place || ''), code: Number(c.weather_code), isDay: c.is_day === 1, temp: Number(c.temperature_2m), cloud: Number(c.cloud_cover), wind: Number(c.wind_speed_10m), precip: Number(c.precipitation),
+      sunrise: local(j.daily?.sunrise?.[0]), sunset: local(j.daily?.sunset?.[0]), units: config.weather.units === 'f' ? 'f' : 'c', updated: Date.now() };
+  } catch (e) { console.warn('weather: ' + e.message); }
+}
+setInterval(() => refreshWeather(), 60e3).unref();
+setTimeout(() => refreshWeather(), 2000).unref();
+
 // ---------- rooms: each active project keeps its room; a freed room goes to the next new project ----------
 const ROOMS_FILE = path.join(STATE_DIR, 'rooms.json');
 let roomSlots = { main: [], school: [] };
@@ -258,6 +280,7 @@ function stateJson() {
   snap.colors = config.colors || {}; snap.robots = config.robots || [];
   snap.characters = config.characters || {};
   snap.theme = config.theme || 'classic';
+  snap.weather = config.weather ? weather : null;
   if (ready) snap.slots = assignRooms(snap);
   snap.inboxes = inboxes();
   snap.answering = answeringOn();

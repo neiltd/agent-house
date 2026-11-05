@@ -7,6 +7,7 @@ Agent House is read-only unless you install the hook. This page covers what chan
 - Reads `~/.claude/projects/**/*.jsonl` and the local HTML files that sessions published as Artifacts. Writes nothing there.
 - Listens on 127.0.0.1 only. Requests with any other `Host` header are refused, which blocks DNS-rebinding from web pages.
 - The page loads nothing from outside: no fonts, no scripts, no analytics. It's served with a Content-Security-Policy (`default-src 'self'`, a per-response script nonce, `frame-ancestors 'none'`).
+- One optional outbound call: with `weather` set in your config, the server asks Open-Meteo for the current weather every 15 minutes, sending only the coordinates you set.
 - Anything running as you can already read your transcripts, so the state API adds no new exposure for local processes.
 
 ## With the hook

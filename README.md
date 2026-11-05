@@ -2,7 +2,7 @@
 
 A live pixel-art house that shows every Claude Code agent on your computer at once.
 
-Each project gets a room, sized by how much it used this week. Agents sit at desks while they edit, stand at the shelf while they read, and walk out to the "internet street" when they search the web, send mail, push to GitHub or drive a browser. A mailbox on the porch raises its flag when an agent is waiting on you.
+Each project gets a room; when a project goes quiet, its room frees up for the next one. Agents sit at desks while they edit, stand at the shelf while they read, and walk out to the "internet street" when they search the web, send mail, push to GitHub or drive a browser. A mailbox on the porch raises its flag when an agent is waiting on you.
 
 At a glance it shows:
 
@@ -45,6 +45,7 @@ Copy `agent-house.config.example.json` to `agent-house.config.json` and edit it.
 | `colors` | Fixed colours per room id. |
 | `robots` | Room ids whose main session is drawn as a robot. |
 | `characters` | Give named subagents one look everywhere, keyed by agent name: `{ "reviewer": { "name": "Robin", "role": "Code review", "body": "#2f6b4f", "hair": "#1c1c1c", "skin": "#e0b48a", "extra": "glasses" } }`. Use `"holo": "<colour>"` to draw a hologram, and `"alias": "<other key>"` for an old name. Extras: glasses, tie, hood, vest, beret, ponytail, longhair, headset, visor, shield, book, clipboard, magnifier (`accent` sets their colour). Teammates who aren't working sit in the Staff Room; holograms wait in the Control Room. A Team panel shows where everyone is. |
+| `weather` | `{ "lat": 34.05, "lon": -118.24, "place": "Los Angeles", "units": "c" }` turns on live weather: the sky follows real sunrise and sunset, with clouds, rain, storms, snow and fog. The server asks [Open-Meteo](https://open-meteo.com) every 15 minutes, sending only these coordinates. It's the only outbound call the house makes, and it's off unless you set it. |
 | `theme` | `"classic"` (default) or `"victorian"`: a stone mansion with bay towers, a mansard roof with dormers, and a turret whose weathervane turns while agents work. |
 | `answering` | `{ "enabled": true, "waitSeconds": 45, "exclude": ["Desktop/sensitive-project"] }`. See below. |
 
