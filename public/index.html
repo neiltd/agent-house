@@ -517,9 +517,20 @@ const theme = () => (snap && snap.theme) || 'classic';
 const TOP = () => (theme() === 'victorian' ? 24 : 0); // headroom above the roof for the turret
 
 /* ---------- sky and live weather (server reads Open-Meteo when config "weather" is set) ---------- */
+/** -1..1: how hard the wind pushes things left (-) or right (+) across the picture. West wind (from 270°) blows to the right. */
+const windPush = (w) => { if (!w) return 0; const dir = Number.isFinite(w.windDir) ? w.windDir : 270; const sign = Math.sin((dir - 180) * Math.PI / 180) >= 0 ? 1 : -1; return sign * Math.min(1, (w.wind || 0) / 50); };
 const WMO = (c) => c === 0 ? 'Clear' : c <= 2 ? 'Partly cloudy' : c === 3 ? 'Overcast' : c <= 48 ? 'Fog' : c <= 57 ? 'Drizzle' : c <= 67 ? 'Rain' : c <= 77 ? 'Snow' : c <= 82 ? 'Showers' : c <= 86 ? 'Snow showers' : 'Thunderstorm';
+// Preview any weather with ?wx=rain|snow|storm|fog|wind|clear (page only; the server is not asked).
+const WX_PREVIEW = { clear: { code: 0, cloud: 5, wind: 6 }, rain: { code: 63, cloud: 90, wind: 14 }, snow: { code: 73, cloud: 95, wind: 10 }, storm: { code: 95, cloud: 100, wind: 38 }, fog: { code: 45, cloud: 80, wind: 3 }, wind: { code: 2, cloud: 45, wind: 55 } };
+const wxParam = (() => { try { return new URLSearchParams(location.search).get('wx'); } catch { return null; } })();
+function weatherNow() {
+  const w = snap && snap.weather; const pv = WX_PREVIEW[wxParam];
+  if (!pv) return w;
+  const base = w || { place: 'Preview', temp: 12, units: 'c', windDir: 250, sunrise: Date.now() - 6 * 3600e3, sunset: Date.now() + 6 * 3600e3 };
+  return { ...base, ...pv, windDir: base.windDir ?? 250, place: (base.place || '') + ' (preview)' };
+}
 function sky() {
-  const w = snap && snap.weather, now = Date.now();
+  const w = weatherNow(), now = Date.now();
   if (!w || !w.sunrise || !w.sunset) return { phase: 'night', f: 0.5, w: null };
   const rise = w.sunrise, set = w.sunset, edge = 40 * 60e3;
   let phase = 'night';
@@ -545,7 +556,7 @@ function drawWeather(t) {
   const { phase, w } = sky(); if (!w) return;
   const code = w.code, wind = Math.max(2, w.wind || 0);
   // clouds drift with the wind
-  const n = Math.round((w.cloud || 0) / 18), dark = code >= 51;
+  const n = Math.round((w.cloud || 0) / (code >= 51 ? 9 : 16)), dark = code >= 51;
   for (let i = 0; i < n; i++) {
     const span = W + 80, x = ((i * 137 + (reduce ? 0 : t * wind * 0.6)) % span) - 60, y = 8 + (i * 29) % 70;
     const c1 = dark ? '#6b7183' : phase === 'night' ? '#3a4160' : '#eef3f8', c2 = dark ? '#585d6d' : phase === 'night' ? '#2f3552' : '#d5dde6';
@@ -555,16 +566,27 @@ function drawWeather(t) {
   }
   const rain = (code >= 51 && code <= 67) || (code >= 80 && code <= 82) || code >= 95, snow = (code >= 71 && code <= 77) || code === 85 || code === 86;
   if (rain || snow) {
-    const count = snow ? 70 : code === 61 || code === 51 || code === 80 ? 60 : 120;
+    const count = snow ? 160 : code === 61 || code === 51 || code === 80 ? 60 : 120;
     for (let i = 0; i < count; i++) {
       const x0 = (i * 53) % W, speed = snow ? 14 : 90, y = ((i * 71 + (reduce ? 0 : t * speed)) % (groundY + 10)) - 10;
-      if (snow) rect('#f4f6fb', x0 + (reduce ? 0 : Math.round(Math.sin(t + i) * 2)), y, 1, 1);
-      else { ctx.globalAlpha = .55; rect('#9fb8d8', x0, y, 1, 3); ctx.globalAlpha = 1; }
+      // wind pushes rain into a slant and snow sideways (Open-Meteo direction is where the wind comes FROM)
+      const push = windPush(w), drift = reduce ? 0 : push * ((y + 10) / (groundY + 10)) * 40;
+      const xx = ((x0 + drift) % W + W) % W;
+      if (snow) { const sz = i % 3 === 0 ? 2 : 1; rect('#f4f6fb', xx + (reduce ? 0 : Math.round(Math.sin(t + i) * 2)), y, sz + 1, sz + 1); }
+      else { ctx.globalAlpha = .55; const sl = Math.round(push * 2); rect('#9fb8d8', xx, y, 1, 2); rect('#9fb8d8', xx + sl, y + 2, 1, 2); ctx.globalAlpha = 1; }
     }
   }
   if (code >= 95 && !reduce && (Math.floor(t * 10) % 70) < 2) {
     ctx.globalAlpha = .35; rect('#ffffff', 0, -TOP(), W, groundY + TOP()); ctx.globalAlpha = 1;
     rect('#fff6c8', 600, 10, 2, 14); rect('#fff6c8', 596, 24, 6, 2); rect('#fff6c8', 596, 26, 2, 14);
+  }
+  // strong wind: leaves blow across the grounds
+  if ((w.wind || 0) >= 25 && !reduce) {
+    const push = windPush(w), n2 = Math.min(30, Math.round((w.wind - 20) / 2));
+    for (let i = 0; i < n2; i++) {
+      const span = W + 40, x = ((i * 97 + t * 60 * push) % span + span) % span - 20, y = groundY - 8 - ((i * 37) % 120) + Math.round(Math.sin(t * 3 + i) * 4);
+      rect(i % 3 ? '#c9803a' : '#e3a72f', x, y, 2, 1);
+    }
   }
   if (code === 45 || code === 48) { ctx.globalAlpha = .35; for (let i = 0; i < 4; i++) rect('#c9cfd8', 0, groundY - 30 - i * 18, W, 8); ctx.globalAlpha = 1; }
 }
@@ -609,9 +631,12 @@ function drawVictorianBody(t) {
 /** Trees around the house and a lawn with a path to the village of internet places. */
 function drawGrounds(t) {
   const night = sky().phase === 'night', leaf = night ? '#13241c' : '#2f5a3a', leaf2 = night ? '#1a3126' : '#3c6e47', trunk = night ? '#1d1510' : '#4a3424';
-  const tree = (x, h, r) => { rect(trunk, x - 1, groundY - h, 3, h); for (const [dx, dy, rr] of [[0, -h, r], [-r * 0.6, -h + r * 0.5, r * 0.8], [r * 0.6, -h + r * 0.4, r * 0.8]]) { ctx.fillStyle = leaf; ctx.beginPath(); ctx.arc(x + dx, groundY + dy, rr, 0, Math.PI * 2); ctx.fill(); } ctx.fillStyle = leaf2; ctx.beginPath(); ctx.arc(x - r * 0.3, groundY - h - r * 0.3, r * 0.5, 0, Math.PI * 2); ctx.fill(); };
+  const sway = reduce ? 0 : windPush(weatherNow()) * 3 + Math.sin(t * (1 + Math.abs(windPush(weatherNow())) * 3)) * Math.abs(windPush(weatherNow())) * 2;
+  const tree = (x, h, r) => { rect(trunk, x - 1, groundY - h, 3, h); x += sway; for (const [dx, dy, rr] of [[0, -h, r], [-r * 0.6, -h + r * 0.5, r * 0.8], [r * 0.6, -h + r * 0.4, r * 0.8]]) { ctx.fillStyle = leaf; ctx.beginPath(); ctx.arc(x + dx, groundY + dy, rr, 0, Math.PI * 2); ctx.fill(); } ctx.fillStyle = leaf2; ctx.beginPath(); ctx.arc(x - r * 0.3, groundY - h - r * 0.3, r * 0.5, 0, Math.PI * 2); ctx.fill(); };
   for (const [x, h, r] of [[8, 70, 22], [30, 46, 16], [470, 54, 18], [500, 80, 24], [748, 64, 20], [730, 40, 14]]) tree(x, h, r);
-  rect(night ? '#1c3324' : '#3f7a45', 0, groundY - 1, W, 5); rect(night ? '#24402c' : '#56924f', 0, groundY - 1, W, 1);
+  const wn = weatherNow(), snowing = wn && ((wn.code >= 71 && wn.code <= 77) || wn.code === 85 || wn.code === 86);
+  if (snowing) { rect(night ? '#9aa6bd' : '#eef2f8', 0, groundY - 2, W, 6); rect('#ffffff', 0, groundY - 2, W, 1); }
+  else { rect(night ? '#1c3324' : '#3f7a45', 0, groundY - 1, W, 5); rect(night ? '#24402c' : '#56924f', 0, groundY - 1, W, 1); }
 }
 function drawVictorianRoof(t) {
   // mansard: steep sides, shingles, a flat cap with iron cresting
@@ -630,11 +655,11 @@ function drawVictorianRoof(t) {
   for (const wx of [tx - 8, tx + 3]) { rect('#3a3324', wx, 15, 5, 8); rect('#ffd27a', wx + 1, 16, 3, 6); }
   ctx.fillStyle = SLATE; ctx.beginPath(); ctx.moveTo(tx - 15, 13); ctx.lineTo(tx, -4); ctx.lineTo(tx + 15, 13); ctx.closePath(); ctx.fill();
   rect(SLATE_L, tx - 15, 12, 30, 2); rect(SLATE_D, tx + 1, 0, 1, 12);
-  const busy = [...chars.values()].some((c) => c.a && !['idle', 'waiting'].includes(c.a.state));
-  const turn = reduce || !busy ? 0 : Math.floor(t * 3) % 4;
+  // the weathervane points where the real wind blows; it spins while agents are busy and the air is still
+  const wv = weatherNow(), busy = [...chars.values()].some((c) => c.a && !['idle', 'waiting'].includes(c.a.state));
   rect('#2a2a30', tx, -2, 1, 4);
-  if (turn % 2 === 0) rect('#2a2a30', tx - 3, -1, 7, 1); else rect('#2a2a30', tx - 1, -1, 3, 1);
-  rect('#e3a72f', turn < 2 ? tx + 3 : tx - 3, -1, 1, 1);
+  if (wv && (wv.wind || 0) >= 8) { const p = windPush(wv); rect('#2a2a30', tx - 3, -1, 7, 1); rect('#e3a72f', p >= 0 ? tx + 3 : tx - 3, -1, 1, 1); }
+  else { const turn = reduce || !busy ? 0 : Math.floor(t * 3) % 4; if (turn % 2 === 0) rect('#2a2a30', tx - 3, -1, 7, 1); else rect('#2a2a30', tx - 1, -1, 3, 1); rect('#e3a72f', turn < 2 ? tx + 3 : tx - 3, -1, 1, 1); }
   const tint = nightTint(); if (tint) { ctx.fillStyle = tint; roofPath(); ctx.fill(); ctx.fillRect(tx - 15, -4, 30, 31); }
 }
 /** How much the night darkens the outside of the house (lit rooms are drawn on top, so they glow). */
@@ -1137,9 +1162,9 @@ function renderPanel() {
   $('done').innerHTML = done.map((a) => `<li><span class="sw" style="background:${projColor(a.project)}"></span><span><b>${esc(projName(a.project))}</b> <span class="muted">· ${esc(a.title || a.label)} · ${ago(Date.now() - a.since)} ago</span></span></li>`).join('');
 
   // weather chip
-  const w = snap.weather;
+  const w = weatherNow();
   $('wx').hidden = !w;
-  if (w) { const tC = w.units === 'f' ? Math.round(w.temp * 9 / 5 + 32) + '°F' : Math.round(w.temp) + '°C'; $('wx').textContent = `${w.place ? w.place + ' · ' : ''}${tC} · ${WMO(w.code)}`; }
+  if (w) { const tC = w.units === 'f' ? Math.round(w.temp * 9 / 5 + 32) + '°F' : Math.round(w.temp) + '°C'; $('wx').textContent = `${w.place ? w.place + ' · ' : ''}${tC} · ${WMO(w.code)}${(w.wind || 0) >= 25 ? ' · windy' : ''}`; }
 
   // team
   const tl = teamList();
