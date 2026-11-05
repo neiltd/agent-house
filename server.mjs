@@ -359,6 +359,9 @@ const server = http.createServer((req, res) => {
     res.write(`data: ${stateJson()}\n\n`);
     clients.set(res, { paired: isPaired(req) });
     req.on('close', () => clients.delete(res));
+  } else if (url.pathname === '/api/notebook') {
+    const nb = store.notebook(String(url.searchParams.get('key') || ''));
+    json(res, nb ? 200 : 404, nb ? { log: nb } : { error: 'no such agent' });
   } else if (url.pathname === '/api/me') {
     json(res, 200, { paired: isPaired(req), answering: answeringOn(), canPair });
   } else if (url.pathname === '/api/answer') {

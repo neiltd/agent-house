@@ -94,6 +94,12 @@ details.done summary{cursor:pointer;color:var(--muted);font-size:13px}
 details.done ul{list-style:none;margin:8px 0 0;padding:0;display:grid;gap:4px;font-size:13px}
 details.done li{display:flex;gap:8px;align-items:baseline}
 .empty{color:var(--muted);font-size:13px;margin:0}
+.notebook{list-style:none;margin:0;padding:0;display:grid;gap:6px;max-height:420px;overflow:auto}
+.nb{font-size:13px;padding:7px 9px;border-radius:5px;background:var(--panel-2);border-left:2px solid var(--line);min-width:0}
+.nb.say{border-left-color:var(--mustard)} .nb.think{border-left-color:#8e86d8} .nb.think .nbt{font-style:italic;color:var(--muted)} .nb.you{border-left-color:var(--dim)}
+.nbk{display:block;font-size:11px;font-weight:600;letter-spacing:.4px;text-transform:uppercase;color:var(--dim);margin-bottom:2px}
+.nbt{white-space:pre-wrap;overflow-wrap:anywhere}
+.nbp{margin:4px 0 0;padding:6px 8px;background:var(--night);border-radius:4px;font-family:var(--f-mono);font-size:11.5px;white-space:pre-wrap;overflow-wrap:anywhere;max-height:160px;overflow:auto}
 .live{list-style:none;margin:0 0 8px;padding:0;display:grid;gap:8px}
 .live li{padding:10px 11px;border-radius:5px;background:var(--panel-2);border-left:3px solid var(--alert);min-width:0}
 .live .top{display:flex;flex-wrap:wrap;gap:2px 8px;align-items:center;font-size:12.5px;color:var(--muted)}
@@ -371,7 +377,11 @@ function stationX(c, type) {
 }
 function syncChars() {
   const seen = new Set();
+  // The house AIs (holograms) exist once: if several of their sessions run, show the most recent and list the rest.
+  const holoBest = new Map();
+  for (const a of snap.agents) { const l = lookOf(a.label); if (l?.holo) { const cur = holoBest.get(l.key); if (!cur || a.lastTs > cur.lastTs) holoBest.set(l.key, a); } }
   for (const a of snap.agents) {
+    { const l = lookOf(a.label); if (l?.holo && holoBest.get(l.key) !== a) continue; }
     const room = roomOf[a.project] || roomOf.home;
     if (!room) continue;
     seen.add(a.key);
@@ -389,6 +399,7 @@ function syncChars() {
     // Rooms are rebuilt on every update, so compare by id: only a real move to another room resets position.
     if (c.room.id !== room.id && c.where === 'room') c.x = room.x + 20;
     c.room = room; c.a = a; c.name = nameFor(a, room);
+    { const l = lookOf(a.label); c.others = l?.holo ? snap.agents.filter((b) => b !== a && lookOf(b.label)?.key === l.key) : []; }
   }
   for (const k of [...chars.keys()]) if (!seen.has(k)) chars.delete(k);
   for (const c of chars.values()) {
@@ -1071,6 +1082,20 @@ function renderPanel() {
   renderDetail();
 }
 const STATE_LABEL = { typing:'Editing', reading:'Reading', running:'Running a command', thinking:'Thinking', waiting:'Waiting on you', idle:'Done, your turn', outside:'Out on the internet' };
+/** The selected agent's notebook, refreshed every few seconds while it's open. */
+let nbKey = null, nbTimer = null;
+const NB_LABEL = { say: 'Said', think: 'Thinking', tool: 'Did', you: 'You' };
+async function loadNotebook(key) {
+  nbKey = key; clearTimeout(nbTimer);
+  try {
+    const r = await fetch('/api/notebook?key=' + encodeURIComponent(key)); const j = await r.json();
+    if (nbKey !== key || !$('notebook')) return;
+    const atBottom = true;
+    $('notebook').innerHTML = (j.log || []).slice().reverse().map((e) => `<li class="nb ${e.kind}"><span class="nbk">${NB_LABEL[e.kind] || e.kind}${e.tool ? ' · ' + esc(e.tool) : ''} <span class="num">${e.ts ? hhmm(e.ts) : ''}</span></span>${e.text ? `<div class="nbt">${esc(e.text)}</div>` : ''}${e.preview ? `<pre class="nbp">${esc(e.preview)}</pre>` : ''}</li>`).join('') || '<li class="empty">Nothing yet.</li>';
+    void atBottom;
+  } catch { /* keep the last view */ }
+  if (ui.sel?.kind === 'agent' && ui.sel.id === key) nbTimer = setTimeout(() => loadNotebook(key), 3000);
+}
 function renderDetail() {
   const el = $('detail'), sel = ui.sel; if (!sel) return;
   if (sel.kind === 'agent') {
@@ -1082,7 +1107,9 @@ function renderDetail() {
       ${a.desc ? `<p class="task">${esc(a.desc)}</p>` : ''}
       ${a.tool ? `<p class="task">${a.state === 'outside' ? `At the <b>${esc(PLACE[a.place]?.name || '')}</b>: ` : ''}${esc(a.tool)} ${a.target ? `<code>${esc(a.target)}</code>` : ''}</p>` : ''}
       <dl class="kv"><dt>Last activity</dt><dd class="num">${ago(Date.now() - a.lastTs)} ago</dd></dl>
-      <h3>Recent</h3><ul class="list">${(a.recent || []).map((h) => `<li><span class="t num">${h.ts ? hhmm(h.ts) : ''}</span><span class="x">${esc(h.tool)} ${h.target ? `<code>${esc(h.target)}</code>` : ''}</span></li>`).join('')}</ul>`;
+      ${c.others && c.others.length ? `<h3>Also handling</h3><ul class="list">${c.others.map((o) => `<li><span class="x"><b>${esc(projName(o.project))}</b> <span class="muted">· ${esc(STATE_LABEL[o.state] || o.state)}${o.tool ? ' · ' + esc(o.tool) : ''}</span></span></li>`).join('')}</ul>` : ''}
+      <h3>Notebook <span class="muted" style="text-transform:none;letter-spacing:0">· what they said, thought and did</span></h3><ol class="notebook" id="notebook"><li class="empty">Loading…</li></ol>`;
+    loadNotebook(a.key);
   } else if (sel.kind === 'place') {
     const pl = PLACE[sel.id], here = [...chars.values()].filter((c) => c.a.state === 'outside' && c.a.place === sel.id);
     el.innerHTML = `<h2>Selected</h2><div class="whois" style="margin-top:10px"><span class="sw" style="background:${pl.body}"></span><div><div class="name">${esc(pl.name)}</div><div class="role">${esc(pl.tools)}</div></div></div>
