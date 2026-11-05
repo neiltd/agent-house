@@ -27,7 +27,7 @@ Then open http://127.0.0.1:4317. The first start reads the last week of transcri
 Claude Code writes every session to `~/.claude/projects/<folder>/<session>.jsonl`. Agent House reads those files and nothing else. It never writes to them, it doesn't call any API, and the page loads nothing from the internet. The server only listens on 127.0.0.1 and refuses requests addressed to any other host name.
 
 - **Rooms** come from each session's working folder. `~/Desktop/my-app/ios` becomes the "my-app" room. Your home folder is the Home Office.
-- **Big rooms** go to the projects that used the most this week. Small ones share the Guest Room, and projects quiet for two weeks move to the attic.
+- **Every project gets a room of the same size.** A project keeps its room while it's active. When it goes quiet for two weeks (it moves to the attic) or is marked finished, its room shows FREE until the next new project moves in. The house only grows when every room is taken. Who lives where is remembered in `~/.agent-house/rooms.json`.
 - **Usage** is cost-weighted tokens: output counts 5×, cache writes 1.25×, cache reads 0.1×. A session that keeps re-reading a large cached context doesn't look bigger than it is. Raw totals are shown too.
 - **Design walls** link to the latest Artifact page each project published.
 - **Inbox pages**: if a session publishes an Artifact whose title contains "Inbox" and is built from `<article class="ask">` cards, its open asks show under "Needs you". It reads the local HTML file the session published from.
@@ -45,6 +45,7 @@ Copy `agent-house.config.example.json` to `agent-house.config.json` and edit it.
 | `colors` | Fixed colours per room id. |
 | `robots` | Room ids whose main session is drawn as a robot. |
 | `characters` | Give named subagents one look everywhere, keyed by agent name: `{ "reviewer": { "name": "Robin", "role": "Code review", "body": "#2f6b4f", "hair": "#1c1c1c", "skin": "#e0b48a", "extra": "glasses" } }`. Use `"holo": "<colour>"` to draw a hologram, and `"alias": "<other key>"` for an old name. Extras: glasses, tie, hood, vest, beret, ponytail, longhair, headset, visor, shield, book, clipboard, magnifier (`accent` sets their colour). Teammates who aren't working sit in the Staff Room; holograms wait in the Control Room. A Team panel shows where everyone is. |
+| `theme` | `"classic"` (default) or `"victorian"`: a stone mansion with bay towers, a mansard roof with dormers, and a turret whose weathervane turns while agents work. |
 | `answering` | `{ "enabled": true, "waitSeconds": 45, "exclude": ["Desktop/sensitive-project"] }`. See below. |
 
 ## Answering from the page (optional)

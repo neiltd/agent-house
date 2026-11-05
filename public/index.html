@@ -155,7 +155,7 @@ code{font-family:var(--f-mono);font-size:12.5px;color:var(--ink);background:var(
   <header>
     <div>
       <h1>Agent House</h1>
-      <p class="sub">Your Mac is the house and the street is the internet. Every project with Claude activity gets a room, sized by how much it used this week.</p>
+      <p class="sub">Your Mac is the house and the street is the internet. Every project with Claude activity gets a room. When a project goes quiet, its room frees up for the next one.</p>
     </div>
     <span class="chip" id="status"><span class="dot" aria-hidden="true"></span><span id="status-text">Connecting…</span></span>
   </header>
@@ -277,51 +277,40 @@ function computeLayout() {
   const projs = snap.projects.filter((p) => !p.finished);
   const isActive = (p) => t - p.lastActive < 14 * 86400e3 || live.has(p.id);
   const weekTot = projs.reduce((s, p) => s + p.week.w, 0) || 1;
-  const school = projs.filter((p) => p.group === 'school' && isActive(p)).sort((a, b) => a.id.localeCompare(b.id));
-  const main = projs.filter((p) => p.group === 'project' && (isActive(p) || (snap.pinned || []).includes(p.id))).sort((a, b) => b.week.w - a.week.w);
-  const pinned = new Set(snap.pinned || []);
-  const own = main.filter((p) => pinned.has(p.id) || p.week.w / weekTot >= 0.01 || live.has(p.id)).sort((a, b) => (pinned.has(a.id) && a.week.w / weekTot < 0.01) - (pinned.has(b.id) && b.week.w / weekTot < 0.01)).slice(0, 8);
-  const guest = main.filter((p) => !own.includes(p));
+  const byId = Object.fromEntries(projs.map((p) => [p.id, p]));
+  const fallback = (g) => projs.filter((p) => p.group === g && isActive(p)).map((p) => p.id);
+  const slots = snap.slots || { main: fallback('project'), school: fallback('school') };
   attic = projs.filter((p) => !isActive(p)).sort((a, b) => b.lastActive - a.lastActive);
   trophies = snap.projects.filter((p) => p.finished);
 
-  const out = [];
+  // Every room is the same size. More projects add rooms; an empty room waits for the next project to move in.
+  const out = [], PER_ROW = 4, GAP = 4, RW = Math.floor((432 - GAP * (PER_ROW - 1)) / PER_ROW), RH = 72;
   let y = 64, wi = 0;
-  const row = (items, opts = {}) => {
-    if (!items.length) return;
-    const gap = 4, total = 432 - gap * (items.length - 1);
-    const weights = items.map((p) => opts.equal ? 1 : Math.max(p.week.w / weekTot, 0.08));
-    const sumW = weights.reduce((a, b) => a + b, 0);
-    const minW = Math.min(96, Math.floor(total / items.length));
-    let widths = weights.map((w) => Math.max(minW, Math.round(total * w / sumW)));
-    const over = widths.reduce((a, b) => a + b, 0) - total;
-    if (over > 0) { const big = widths.indexOf(Math.max(...widths)); widths[big] -= over; }
-    else widths[widths.length - 1] -= over;
-    let x = 24;
-    items.forEach((p, i) => {
+  const place = (ids, school) => {
+    ids.forEach((id, i) => {
+      const col = i % PER_ROW; if (i && col === 0) y += RH + 8;
+      const p = id ? byId[id] : null;
       const [wall, pat, kind] = WALLS[(wi++) % WALLS.length];
-      out.push({ id: p.id, p, label: (opts.prefix || '') + p.name.toUpperCase(), x, y, w: widths[i], h: 72, wall, pat, kind, school: !!opts.equal });
-      x += widths[i] + gap;
+      const x = 24 + col * (RW + GAP);
+      if (p) out.push({ id: p.id, p, label: (school ? (p.short || p.name) : p.name).toUpperCase(), x, y, w: RW, h: RH, wall, pat, kind, school });
+      else out.push({ id: 'vacant-' + (school ? 's' : 'm') + i, p: { id: 'vacant', name: 'Empty room', week: { w: 0, raw: 0 }, today: { w: 0, raw: 0 } }, label: 'TO LET', x, y, w: RW, h: RH, wall: '#3a3a42', pat: '#42424c', kind: 'panel', vacant: true });
     });
-    y += 80;
+    if (ids.length) y += RH + 8;
   };
-  row(own.slice(0, 2)); row(own.slice(2, 5)); row(own.slice(5, 8));
-  if (y === 64) y += 80;
-  if (school.length) row(school.slice(0, 6).map((p) => ({ ...p, name: p.short || p.name })), { equal: true, prefix: '' });
+  const padRow = (ids) => { const a = ids.length ? [...ids] : [null]; while (a.length % PER_ROW) a.push(null); return a; };
+  place(padRow(slots.main), false);
+  place(slots.school, true);
   groundY = y - 4;
   const by = groundY + 8;
   const homeP = projs.find((p) => p.id === 'home') || { id:'home', name:'Home Office', week:{w:0,raw:0}, today:{w:0,raw:0} };
   out.push({ id:'home', p: homeP, label:'HOME OFFICE', x:24, y:by, w:150, h:60, wall:'#4b3b5c', pat:'#55446a', kind:'panel' });
-  out.push({ id:'staff', p:{ id:'staff', name:'Staff Room', week:{w:0,raw:0}, today:{w:0,raw:0} }, label:'STAFF ROOM', x:178, y:by, w:112, h:60, wall:'#3f5a4a', pat:'#476553', kind:'stripe', staff: true });
-  out.push({ id:'guest', p:{ id:'guest', name:'Guest Room', members: guest }, label:'GUEST ROOM', x:294, y:by, w:162, h:60, wall:'#5a4632', pat:'#634e39', kind:'panel', guest });
-  H = by + 60 + 14;
+  out.push({ id:'staff', p:{ id:'staff', name:'Staff Room', week:{w:0,raw:0}, today:{w:0,raw:0} }, label:'STAFF ROOM', x:178, y:by, w:278, h:60, wall:'#3f5a4a', pat:'#476553', kind:'stripe', staff: true });
+  H = by + 60 + 14 + TOP();
   rooms = out;
   roomOf = {};
   for (const r of rooms) roomOf[r.id] = r;
-  for (const p of guest) roomOf[p.id] = roomOf.guest;
-  for (const p of attic) roomOf[p.id] = roomOf.guest;
-  for (const p of school.slice(6)) roomOf[p.id] = roomOf.guest;
-  for (const r of rooms) r.st = stations(r);
+  for (const p of projs) if (!roomOf[p.id]) roomOf[p.id] = roomOf.home;
+  for (const r of rooms) r.st = r.vacant ? [] : stations(r);
   if (cv.height !== H * S) { cv.width = W * S; cv.height = H * S; cv.style.aspectRatio = `${W} / ${H}`; }
 }
 function stations(r) {
@@ -364,7 +353,7 @@ function stationX(c, type) {
 function syncChars() {
   const seen = new Set();
   for (const a of snap.agents) {
-    const room = roomOf[a.project] || roomOf.guest;
+    const room = roomOf[a.project] || roomOf.home;
     if (!room) continue;
     seen.add(a.key);
     let c = chars.get(a.key);
@@ -439,19 +428,91 @@ function drawWorld(t) {
   for (const s of stars) { ctx.globalAlpha = 0.35 + (reduce ? 1 : (Math.sin(t * 1.5 + s.p) + 1) / 2) * 0.6; rect('#f1e8d4', s.x, s.y, 1, 1); }
   ctx.globalAlpha = 1;
   rect('#f4e7c0', 54, 14, 10, 10); rect('#0f1530', 58, 13, 8, 8);
-  rect('#2e2119', 0, groundY + 4, W, H - groundY);
+  rect('#2e2119', 0, groundY + 4, W, H - TOP() - groundY);
   rect('#3f6b3a', 0, groundY - 1, 480, 5); rect('#4f8447', 0, groundY - 1, 480, 1);
   rect('#8a8f9c', 476, groundY - 1, W - 476, 4); rect('#3a3d47', 476, groundY + 3, W - 476, 12);
   for (let x = 482; x < W; x += 14) rect('#d9c46a', x, groundY + 8, 7, 1);
   text('THE INTERNET', 624, groundY - 140, '#6e77a3', 'center');
+  if (theme() === 'victorian') return drawVictorianBody(t);
   rect('#5d3a22', 16, 60, 448, groundY - 60);
-  rect('#4a2f1c', 16, groundY + 4, 448, H - groundY - 12);
+  rect('#4a2f1c', 16, groundY + 4, 448, H - TOP() - groundY - 12);
+}
+const theme = () => (snap && snap.theme) || 'classic';
+const TOP = () => (theme() === 'victorian' ? 24 : 0); // headroom above the roof for the turret
+
+/* ---------- Victorian theme: a Second Empire style mansion (original pixel art) ---------- */
+const STONE = '#e6dcc6', STONE_D = '#cdbf9f', STONE_L = '#f3ecdc', TRIM = '#b9a983', SLATE = '#8c4a36', SLATE_D = '#6e3826', SLATE_L = '#a85d45';
+function drawVictorianBody(t) {
+  // stone front, with block lines
+  rect(STONE, 16, 60, 448, groundY - 60);
+  ctx.fillStyle = STONE_D;
+  for (let y = 64; y < groundY; y += 6) { ctx.fillRect(16, y, 448, 1); for (let x = 16 + ((y / 6) % 2) * 6; x < 464; x += 12) ctx.fillRect(x, y, 1, 6); }
+  // a carved ledge with brackets under every floor
+  for (const r of rooms) if (!r.staff && r.y + r.h + 2 < groundY) {
+    const y = r.y + r.h;
+    rect(TRIM, 16, y, 448, 3); rect(STONE_L, 16, y, 448, 1);
+    for (let x = 20; x < 462; x += 8) rect(STONE_D, x, y + 3, 3, 2);
+  }
+  // bay towers on both sides, with one tall window per floor that glows when the floor is busy
+  const floors = [...new Set(rooms.filter((r) => r.y < groundY).map((r) => r.y))];
+  for (const side of [0, 1]) {
+    const x = side ? 464 : 4, w = 12, top = 66, bot = side ? groundY - 34 : groundY;
+    rect(STONE, x, top, w, bot - top); rect(TRIM, x, top - 3, w, 3); rect(STONE_L, x - 1, top - 4, w + 2, 1);
+    rect(STONE_D, side ? x : x + w - 1, top, 1, bot - top);
+    for (const fy of floors) {
+      if (fy + 60 > bot) continue;
+      const busy = [...chars.values()].some((c) => c.room && c.room.y === fy && c.a && c.a.state !== 'idle');
+      rect('#3a3324', x + 3, fy + 18, 6, 26); rect(busy ? '#ffd27a' : '#2b3550', x + 4, fy + 19, 4, 24);
+      rect(STONE_D, x + 4, fy + 30, 4, 1); rect(TRIM, x + 2, fy + 45, 8, 2);
+      rect(TRIM, x + 3, fy + 15, 6, 2); rect(STONE_L, x + 5, fy + 13, 2, 2);
+    }
+  }
+  // stone base for the basement
+  rect('#b3a585', 16, groundY + 4, 448, H - TOP() - groundY - 12); ctx.fillStyle = '#9e916f';
+  for (let y = groundY + 8; y < H - TOP() - 8; y += 7) ctx.fillRect(16, y, 448, 1);
+}
+function drawVictorianRoof(t) {
+  // mansard: steep sides, shingles, a flat cap with iron cresting
+  ctx.fillStyle = SLATE; ctx.beginPath(); ctx.moveTo(6, 63); ctx.lineTo(34, 22); ctx.lineTo(446, 22); ctx.lineTo(474, 63); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = SLATE_D; for (let y = 26; y < 62; y += 4) { const inset = Math.round((63 - y) * 28 / 41); ctx.fillRect(6 + inset, y, 468 - 2 * inset, 1); }
+  // cutaway into the roof: the control room and attic inside
+  rect('#2b1f17', 40, 27, 400, 34); rect(SLATE_L, 34, 22, 412, 2); rect(TRIM, 4, 60, 472, 3); rect(STONE_L, 4, 60, 472, 1);
+  for (let x = 36; x < 446; x += 6) { rect('#2a2a30', x, 18, 1, 4); rect('#2a2a30', x - 1, 17, 3, 1); }
+  rect('#2a2a30', 34, 20, 412, 1);
+  // dormers on the sloped ends
+  for (const dx of [16, 452]) { rect(STONE, dx, 40, 12, 14); rect('#ffd27a', dx + 3, 44, 6, 8); rect(STONE_D, dx + 5, 44, 1, 8); ctx.fillStyle = SLATE_L; ctx.beginPath(); ctx.moveTo(dx - 2, 41); ctx.lineTo(dx + 6, 33); ctx.lineTo(dx + 14, 41); ctx.closePath(); ctx.fill(); }
+  // the turret, with a cone roof and a weathervane that turns while anyone is working
+  const tx = 400;
+  rect(STONE, tx - 12, 12, 24, 15); rect(STONE_D, tx + 10, 12, 2, 15); rect(TRIM, tx - 13, 25, 26, 2);
+  for (const wx of [tx - 8, tx + 3]) { rect('#3a3324', wx, 15, 5, 8); rect('#ffd27a', wx + 1, 16, 3, 6); }
+  ctx.fillStyle = SLATE; ctx.beginPath(); ctx.moveTo(tx - 15, 13); ctx.lineTo(tx, -4); ctx.lineTo(tx + 15, 13); ctx.closePath(); ctx.fill();
+  rect(SLATE_L, tx - 15, 12, 30, 2); rect(SLATE_D, tx + 1, 0, 1, 12);
+  const busy = [...chars.values()].some((c) => c.a && !['idle', 'waiting'].includes(c.a.state));
+  const turn = reduce || !busy ? 0 : Math.floor(t * 3) % 4;
+  rect('#2a2a30', tx, -2, 1, 4);
+  if (turn % 2 === 0) rect('#2a2a30', tx - 3, -1, 7, 1); else rect('#2a2a30', tx - 1, -1, 3, 1);
+  rect('#e3a72f', turn < 2 ? tx + 3 : tx - 3, -1, 1, 1);
+}
+function drawVictorianDoor() {
+  // grand steps up to an arched front door (agents leave here for the street)
+  const x = 466;
+  rect(STONE, x - 4, groundY - 32, 16, 32); rect(TRIM, x - 5, groundY - 34, 18, 2);
+  rect('#3b2416', x - 1, groundY - 26, 10, 26); rect('#5a3a24', x, groundY - 25, 8, 25);
+  rect('#ffd27a', x + 1, groundY - 24, 6, 3); rect(STONE_L, x - 1, groundY - 28, 10, 2);
+  rect('#e3a72f', x + 6, groundY - 13, 1, 2);
+  for (let i = 0; i < 3; i++) rect(i % 2 ? STONE_D : STONE_L, x - 6 - i * 2, groundY - 3 + i, 20 + i * 4, 1);
 }
 function drawRoof(t) {
+  if (theme() === 'victorian') drawVictorianRoof(t); else drawClassicRoof();
+  drawRoofContents(t);
+}
+function drawClassicRoof() {
   ctx.fillStyle = '#a8482a'; ctx.beginPath(); ctx.moveTo(8, 62); ctx.lineTo(240, 14); ctx.lineTo(472, 62); ctx.closePath(); ctx.fill();
   ctx.fillStyle = '#2b1f17'; ctx.beginPath(); ctx.moveTo(30, 60); ctx.lineTo(240, 22); ctx.lineTo(450, 60); ctx.closePath(); ctx.fill();
   rect('#7c3520', 8, 60, 464, 3);
   rect('#6b4429', 360, 20, 12, 26); rect('#7c5233', 358, 18, 16, 3);
+}
+function drawRoofContents(t) {
   // control room meter: share of the selected period by project
   const projs = snap.projects.filter((p) => val(p).w > 0).sort((a, b) => val(b).w - val(a).w);
   const sum = projs.reduce((s, p) => s + val(p).w, 0) || 1;
@@ -518,7 +579,7 @@ function drawPlaces(t) {
   }
   // porch + mailbox
   const asks = snap.asks.filter((a) => a.kind !== 'done').length + inboxCount();
-  rect('#5d3a22', 464, groundY - 29, 12, 29); rect('#8a5a36', 465, groundY - 27, 10, 27); rect('#e3a72f', 472, groundY - 13, 1, 2);
+  if (theme() !== 'victorian') { rect('#5d3a22', 464, groundY - 29, 12, 29); rect('#8a5a36', 465, groundY - 27, 10, 27); rect('#e3a72f', 472, groundY - 13, 1, 2); }
   rect('#4a4f5c', 486, groundY - 15, 2, 15); rect('#c94f3d', 481, groundY - 23, 12, 8);
   if (asks) { rect('#e3a72f', 493, groundY - 29, 1, 8); rect('#e3a72f', 494, groundY - 29, 4, 3); if (reduce || Math.floor(t * 2.5) % 2 === 0) { rect('#ff6b5e', 479, groundY - 37, 16, 10); text(String(asks), 487, groundY - 36, '#1b0d0b', 'center'); } }
   else rect('#e3a72f', 493, groundY - 19, 4, 1);
@@ -616,6 +677,7 @@ function drawChar(c, t) {
 }
 function draw(t) {
   ctx.setTransform(S, 0, 0, S, 0, 0); ctx.imageSmoothingEnabled = false;
+  if (TOP()) { rect('#0f1530', 0, 0, W, TOP() + 1); ctx.setTransform(S, 0, 0, S, 0, TOP() * S); } // headroom: everything shifts down
   drawWorld(t);
   const inRoom = (r) => [...chars.values()].filter((c) => c.room === r && c.where === 'room');
   for (const r of rooms) {
@@ -632,9 +694,11 @@ function draw(t) {
     const lit = [...chars.values()].some((c) => c.room === r && c.a.state !== 'idle');
     rect(lit ? '#ffd27a' : '#6b5a3a', cx - 4, r.y + 7, 9, 3);
     if (r.staff) drawStaff(r, t);
+    if (r.vacant) { const cx = r.x + r.w / 2, fy2 = floorY(r); rect('#6b4429', cx - 14, fy2 - 34, 28, 14); rect('#e8dcc0', cx - 13, fy2 - 33, 26, 12); text('FREE', cx, fy2 - 32, '#3a2416', 'center'); rect('#6b4429', cx - 1, fy2 - 20, 2, 20); }
     if (r.guest) { const names = r.guest.slice(0, Math.max(1, Math.floor((r.w - 40) / 38))).map((p) => p.name.toUpperCase()); names.forEach((n, i) => { const dx = r.x + 30 + i * 38; rect('#3a2416', dx - 9, fy - 30, 18, 30); rect('#6b4429', dx - 8, fy - 29, 16, 29); rect('#e3a72f', dx + 4, fy - 16, 2, 2); text(fitText(n, 36), dx, fy - 40, '#cdbb98', 'center'); }); }
   }
   drawPlaces(t);
+  if (theme() === 'victorian') drawVictorianDoor();
   for (const c of chars.values()) drawChar(c, t);
   const total = snap.projects.reduce((s, p) => s + val(p).w, 0) || 1;
   for (const r of rooms) {
@@ -643,14 +707,14 @@ function draw(t) {
     else { const cx = r.x + r.w / 2, g = ctx.createRadialGradient(cx, r.y + 10, 2, cx, r.y + 10, r.w * .6); g.addColorStop(0, 'rgba(255,210,122,.22)'); g.addColorStop(1, 'rgba(255,210,122,0)'); ctx.fillStyle = g; ctx.fillRect(r.x, r.y, r.w, r.h); }
     if (ui.sel?.kind === 'room' && ui.sel.id === r.id) { ctx.strokeStyle = '#ffd27a'; ctx.lineWidth = 1; ctx.strokeRect(r.x + .5, r.y + .5, r.w - 1, r.h - 1); }
     const v = r.guest ? r.guest.reduce((s, p) => s + val(p).w, 0) : val(r.p).w || 0;
-    const pct = r.staff ? '' : ' ' + Math.round(100 * v / total) + '%';
+    const pct = r.staff || r.vacant ? '' : ' ' + Math.round(100 * v / total) + '%';
     const waiting = [...chars.values()].some((c) => c.room === r && c.a.state === 'waiting') || (snap.inboxes || []).some((b) => b.asks.length && roomOf[b.project] === r);
     const pw = pxw(pct), room = r.w - 12 - pw - (waiting ? 9 : 0);
     const lab = fitText(r.label, room), lw = pxw(lab);
     rect('rgba(8,10,24,.75)', r.x + 3, r.y + 3, Math.ceil(lw + pw) + 6 + (waiting ? 9 : 0), 11);
     let x = r.x + 6;
     if (waiting) { if (reduce || Math.floor(t * 2.5) % 2 === 0) rect('#ff6b5e', x, r.y + 5, 6, 7); x += 9; }
-    text(lab, x, r.y + 4, r.id === 'guest' ? '#cdbb98' : projColor(r.id)); text(pct, x + lw, r.y + 4, '#f1e8d4');
+    text(lab, x, r.y + 4, r.vacant ? '#8a8a96' : projColor(r.id)); text(pct, x + lw, r.y + 4, '#f1e8d4');
   }
   drawRoof(t);
   drawControlCrew(t);
@@ -830,7 +894,7 @@ toggle('tab-proj', 'tab-agent', 'tab', 'proj'); toggle('tab-agent', 'tab-proj', 
 
 cv.addEventListener('click', (e) => {
   if (!snap) return;
-  const b = cv.getBoundingClientRect(), lx = (e.clientX - b.left) * W / b.width, ly = (e.clientY - b.top) * H / b.height;
+  const b = cv.getBoundingClientRect(), lx = (e.clientX - b.left) * W / b.width, ly = (e.clientY - b.top) * H / b.height - TOP();
   for (const c of chars.values()) { if (c.inside) continue; const fy = c.where === 'street' ? groundY : floorY(c.room); if (Math.abs(lx - c.x) <= 7 && ly >= fy - 30 && ly <= fy) return select('agent', c.key); }
   if (lx >= 478 && lx <= 498 && ly >= groundY - 40 && ly <= groundY) return $('mail-card').scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block:'nearest' });
   for (const p of PLACES) if (lx >= p.x && lx <= p.x + p.w && ly >= groundY - p.h - 12 && ly <= groundY) return select('place', p.id);

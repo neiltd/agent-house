@@ -223,6 +223,31 @@ function logAnswer({ ask, decision }) {
 const waitMs = () => Math.min(50, Math.max(5, Number(answerCfg().waitSeconds) || 45)) * 1000;
 let desk = createDesk({ waitMs: waitMs(), onLog: logAnswer });
 
+// ---------- rooms: each active project keeps its room; a freed room goes to the next new project ----------
+const ROOMS_FILE = path.join(STATE_DIR, 'rooms.json');
+let roomSlots = { main: [], school: [] };
+try { const j = JSON.parse(fs.readFileSync(ROOMS_FILE, 'utf8')); if (Array.isArray(j.main) && Array.isArray(j.school)) roomSlots = j; } catch {}
+function assignRooms(snap) {
+  const t = snap.generatedAt, live = new Set(snap.agents.map((a) => a.project)), pinned = new Set(config.pinned || []);
+  const active = (p) => !p.finished && (pinned.has(p.id) || live.has(p.id) || t - p.lastActive < 14 * 86400e3);
+  const fill = (slots, wanted) => {
+    const want = new Set(wanted.map((p) => p.id));
+    const next = slots.map((id) => (id && want.has(id) ? id : null)); // a project that left frees its room
+    for (const p of wanted) if (!next.includes(p.id)) { const free = next.indexOf(null); if (free >= 0) next[free] = p.id; else next.push(p.id); }
+    while (next.length && next[next.length - 1] === null) next.pop();
+    return next;
+  };
+  const byUse = (a, b) => (pinned.has(b.id) - pinned.has(a.id)) || b.week.w - a.week.w;
+  const main = snap.projects.filter((p) => p.group === 'project' && active(p)).sort(byUse);
+  const school = snap.projects.filter((p) => p.group === 'school' && active(p)).sort((a, b) => a.id.localeCompare(b.id));
+  const next = { main: fill(roomSlots.main, main), school: fill(roomSlots.school, school) };
+  if (JSON.stringify(next) !== JSON.stringify(roomSlots)) {
+    roomSlots = next;
+    try { fs.writeFileSync(ROOMS_FILE, JSON.stringify(roomSlots, null, 1) + '\n', { mode: 0o600 }); } catch {}
+  }
+  return roomSlots;
+}
+
 // ---------- http ----------
 const clients = new Map(); // res -> { paired }
 let lastJson = '';
@@ -232,6 +257,8 @@ function stateJson() {
   snap.ready = ready; snap.progress = progress; snap.pinned = config.pinned || [];
   snap.colors = config.colors || {}; snap.robots = config.robots || [];
   snap.characters = config.characters || {};
+  snap.theme = config.theme || 'classic';
+  if (ready) snap.slots = assignRooms(snap);
   snap.inboxes = inboxes();
   snap.answering = answeringOn();
   snap.live = desk.list().map((a) => {
