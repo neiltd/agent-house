@@ -605,9 +605,9 @@ function drawWeather(t) {
   if (code === 45 || code === 48) { ctx.globalAlpha = .35; for (let i = 0; i < 4; i++) rect('#c9cfd8', 0, groundY - 30 - i * 18, W, 8); ctx.globalAlpha = 1; }
 }
 
-/* ---------- Dream theme: an impossible mansion (Andrea's v2 design) ----------
+/* ---------- Dream theme: an impossible mansion (the dream design) ----------
    Two mismatched stacks glued to a glass spine lift, a floating wing with an upside-down room on chains,
-   a leaning school tower with a diagonal tube, EDITH's turret on a stalk, and one tilted roof.
+   a leaning school tower with a diagonal tube, a watch turret on a stalk, and one tilted roof.
    Everything is placed relative to the ground line, which is computed so the whole house fits; rooms never size by usage. */
 const D_WALLS = [
   ['#8f3a2a', '#9d4634', 'panel'], ['#1f5f66', '#276b72', 'stripe'], ['#4c6a3a', '#567845', 'dots'], ['#5b3f6b', '#674a78', 'diamond'],
@@ -649,7 +649,7 @@ function dreamGeometry(G, nL, nR, nE) {
   return { G, L, R, F, F_TOP, HANG, TOWER, LEFT_TOP, RIGHT_TOP, roof, ctrl, turret, chimney, floatRoof, BY: G + 8, minY };
 }
 
-/** Rooms for the dream house: the server's slots, in Andrea's slot order, then more stack floors as projects arrive. */
+/** Rooms for the dream house: the server's slots, in the dream slot order, then more stack floors as projects arrive. */
 function dreamLayout(slots, byId) {
   const main = [...slots.main], order = [...D_BASE_SLOTS];
   for (let k = 6; order.length < main.length; k++) order.push('L' + k, 'R' + k); // after slot 15 only the stacks grow
@@ -805,7 +805,7 @@ function drawDreamRoofs(t) {
   // the chimney, smoking while anyone works
   { const { x, y } = g.chimney; rect('#7a3940', x, y, 8, 30); rect('#5c2a30', x, y, 2, 30); rect(TRIM, x - 1, y, 10, 2); dShade(x - 1, y, 10, 30);
     if (anyBusy) for (let i = 0; i < 3; i++) { const rise = reduce ? 0 : (t * 6) % 8; ctx.globalAlpha = .5 - i * .12; dCircle('#cfd4ea', x + 4 + i * 4 + windPush(weatherNow()) * i * 3, y - 6 - i * 8 - rise, 3 + i); } ctx.globalAlpha = 1; }
-  // EDITH's round tower on a thin stalk, with a leaning cone and a weathervane
+  // the watch turret: a round tower on a thin stalk, with a leaning cone and a weathervane
   { const tu = g.turret, cx = tu.cx, r = tu.r, bodyTop = tu.bodyTop, bodyBottom = tu.bodyBottom, cone = tu.cone;
     rect(STONE, cx - 4, tu.stalkTop, 8, tu.stalkBottom - tu.stalkTop); rect(STONE_D, cx + 2, tu.stalkTop, 2, tu.stalkBottom - tu.stalkTop); for (let y = tu.stalkTop + 4; y < tu.stalkBottom; y += 6) rect(STONE_D, cx - 4, y, 8, 1);
     dPoly(STONE_D, [[cx - 4, tu.stalkTop + 6], [cx + 4, tu.stalkTop + 6], [cx + r + 2, bodyBottom], [cx - r - 2, bodyBottom]]);
@@ -816,7 +816,7 @@ function drawDreamRoofs(t) {
     for (const wx of [cx - 10, cx + 6]) { rect('#3a3324', wx, bodyTop + 10, 5, 10); rect(D_DARK_WIN, wx + 1, bodyTop + 11, 3, 8); }
     dPoly(SLATE, [[cx - r - 4, bodyTop + 1], [cx + 4, bodyTop - cone], [cx + r + 4, bodyTop + 1]]); rect(SLATE_L, cx - r - 4, bodyTop, 2 * r + 8, 2);
     dShade(cx - r - 4, bodyTop - cone - 10, 2 * r + 8, bodyBottom - bodyTop + cone + 12); dShade(cx - 4, tu.stalkTop, 8, tu.stalkBottom - tu.stalkTop);
-    for (const wx of [cx - 10, cx + 6]) rect(D_WARM, wx + 1, bodyTop + 11, 3, 8); // EDITH keeps her lights on
+    for (const wx of [cx - 10, cx + 6]) rect(D_WARM, wx + 1, bodyTop + 11, 3, 8); // the turret keeps its lights on
     // the weathervane points where the real wind blows; in still air it spins while agents are busy
     const vx = cx + 4, vy = bodyTop - cone - 7, wv = weatherNow();
     rect(D_IRON, vx, vy - 1, 1, 8);
@@ -1124,11 +1124,11 @@ function drawStaff(r, t) {
   if (theme() === 'dream') dreamStaffExtras(r, fy);
   else { rect('#2b2f3a', r.x + r.w - 18, fy - 16, 10, 16); rect('#c94f3d', r.x + r.w - 16, fy - 13, 6, 3); rect('#f1e8d4', r.x + r.w - 15, fy - 6, 3, 2); } // coffee machine
   const free = teamList().filter((l) => !l.holo && !atWork().has(l.key));
-  // free-time spots (Andrea's furniture table): sofa seats, an armchair, the green chair, the coffee machine, a blackboard
-  const SPOTS = { raphael: { dx: 15, seat: 6 }, claires: { dx: 30, seat: 6 }, kai: { dx: 45, seat: 6 }, sage: { dx: 64, seat: 6, armchair: true }, andrea: { dx: 82, seat: 6, chair: true }, warden: { dx: 116, seat: 0 }, mark: { dx: 132, seat: 0, board: true } };
+  // free-time spots come from each character's config "free": { "dx": px from the room's left, "seat": px raised, "prop": "armchair" | "chair" | "board" }
+  const spotOf = (l) => (l.free && Number.isFinite(Number(l.free.dx)) ? { dx: Number(l.free.dx), seat: Number(l.free.seat) || 0, armchair: l.free.prop === 'armchair', chair: l.free.prop === 'chair', board: l.free.prop === 'board' } : null);
   let extra = 0;
   free.forEach((l) => {
-    const c = { look: l, body: l.body || '#777', hair: l.hair || '#2a1a10', skin: l.skin || '#e0b48a' }, sp = SPOTS[l.key];
+    const c = { look: l, body: l.body || '#777', hair: l.hair || '#2a1a10', skin: l.skin || '#e0b48a' }, sp = spotOf(l);
     const spr = spriteOf(l);
     if (!sp || !spr) { // no sprite: the old dozing look, lined up after the named spots
       const x = r.x + 150 + extra++ * 13; if (x > r.x + r.w - 10) return;
@@ -1142,22 +1142,22 @@ function drawStaff(r, t) {
     drawSprite(l, spr, x, fy - sp.seat, t, { kind: 'free', face: sp.board ? 1 : 1 });
   });
 }
-/** JARVIS, FRIDAY and EDITH make rounds: each visits the busy rooms in turn, beaming in and out. Idle: the control room. */
+/** The house AIs (characters with a star) make rounds: each visits the busy rooms in turn. Idle: their post (config "post": 0, 1 = Control Room, 2 = turret). */
 function drawControlCrew(t) {
   const crew = teamList().filter((l) => l.holo && !atWork().has(l.key));
   const busy = rooms.filter((r) => !r.vacant && !r.staff && [...chars.values()].some((c) => c.room === r && c.a && c.a.state !== 'idle'));
   const spots = theme() === 'dream' && DG ? [{ x: DG.ctrl.x0 + 26, y: DG.ctrl.floorY }, { x: DG.ctrl.x1 - 26, y: DG.ctrl.floorY }, { x: DG.turret.cx, y: DG.turret.floorY }] : [{ x: 165, y: 59 }, { x: 306, y: 59 }, { x: 346, y: 59 }];
   crew.slice(0, 3).forEach((l, k) => {
     const c = { look: l };
-    const post = (sp) => { // at their post: their free-time loop (FRIDAY in an armchair)
+    const post = (sp) => { // at their post: their free-time loop (an armchair if their config asks for one)
       let fy2 = sp.y;
-      if (l.key === 'friday' && spriteOf(l)) { rect('#5b3b5e', sp.x - 8, sp.y - 14, 16, 14); rect('#6e4a72', sp.x - 7, sp.y - 8, 14, 3); fy2 = sp.y - 6; }
+      if (l.free?.prop === 'armchair' && spriteOf(l)) { rect('#5b3b5e', sp.x - 8, sp.y - 14, 16, 14); rect('#6e4a72', sp.x - 7, sp.y - 8, 14, 3); fy2 = sp.y - 6; }
       const top = drawPerson(c, sp.x, fy2, t, { still: true, kind: 'free' });
-      // in the turret the name goes under her, so it doesn't touch the window frame
+      // in the turret the name goes underneath, so it doesn't touch the window frame
       const inTurret = theme() === 'dream' && DG && sp === spots[2];
       text(String(l.name || l.key).toUpperCase(), sp.x, inTurret ? sp.y + 4 : top - 9, l.star || l.holo || '#f1e8d4', 'center');
     };
-    const keyed = { jarvis: 0, friday: 1, edith: 2 }; const mySpot = spots[keyed[l.key] ?? k] || spots[k];
+    const mySpot = spots[Number.isInteger(l.post) ? l.post : k] || spots[k];
     if (!busy.length) return post(mySpot);
     const period = 12, clock = t + k * 4, slot = Math.floor(clock / period), u = (clock % period) / period;
     const r = busy[(slot + k) % busy.length], fy = floorY(r);
@@ -1252,7 +1252,7 @@ function drawRoomView(r, t) {
     c.viewX = x; c.viewFy = fy;
   });
   if (!here.length) text('NOBODY IS WORKING HERE RIGHT NOW', VW / 2 + 20, fy - 40, '#cfd4ea', 'center');
-  // JARVIS, FRIDAY and EDITH walk in from the door and report
+  // the house AIs walk in from the door and report
   const crew = teamList().filter((l) => l.holo).slice(0, 3);
   rect('#3b2416', VW - 16, fy - 30, 14, 30); rect('#5a3a24', VW - 15, fy - 29, 12, 29); rect('#e3a72f', VW - 13, fy - 15, 1, 2);
   const waiting = here.filter((c) => c.a.state === 'waiting').length, working = here.filter((c) => c.a.state !== 'idle').length;

@@ -40,7 +40,11 @@
       "role": "Assistant",
       "extra": "tie",
       "sprite": "example",
-      "star": "#6fd3ff"
+      "star": "#6fd3ff",
+      "free": {
+        "dx": 20,
+        "seat": 6
+      }
     },
     "reviewer": {
       "name": "Robin",
@@ -49,7 +53,11 @@
       "hair": "#1c1c1c",
       "skin": "#e0b48a",
       "extra": "glasses",
-      "sprite": "example"
+      "sprite": "example",
+      "free": {
+        "dx": 20,
+        "seat": 6
+      }
     },
     "old-name": {
       "alias": "reviewer"
