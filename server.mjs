@@ -231,6 +231,7 @@ function stateJson() {
   const snap = store.snapshot(config);
   snap.ready = ready; snap.progress = progress; snap.pinned = config.pinned || [];
   snap.colors = config.colors || {}; snap.robots = config.robots || [];
+  snap.characters = config.characters || {};
   snap.inboxes = inboxes();
   snap.answering = answeringOn();
   snap.live = desk.list().map((a) => {

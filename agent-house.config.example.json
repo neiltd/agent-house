@@ -1,12 +1,56 @@
 {
-  "pinned": ["my-app"],
-  "finished": ["old-project"],
-  "rules": [
-    { "prefix": "Desktop/my-app", "id": "my-app", "name": "My App" },
-    { "prefix": "code/my-app-api", "id": "my-app", "name": "My App" }
+  "pinned": [
+    "my-app"
   ],
-  "school": [{ "prefix": "Documents/University", "name": "Uni" }],
-  "colors": { "my-app": "#e3a72f" },
+  "finished": [
+    "old-project"
+  ],
+  "rules": [
+    {
+      "prefix": "Desktop/my-app",
+      "id": "my-app",
+      "name": "My App"
+    },
+    {
+      "prefix": "code/my-app-api",
+      "id": "my-app",
+      "name": "My App"
+    }
+  ],
+  "school": [
+    {
+      "prefix": "Documents/University",
+      "name": "Uni"
+    }
+  ],
+  "colors": {
+    "my-app": "#e3a72f"
+  },
   "robots": [],
-  "answering": { "enabled": true, "waitSeconds": 45, "exclude": ["Desktop/sensitive-project"] }
+  "answering": {
+    "enabled": true,
+    "waitSeconds": 45,
+    "exclude": [
+      "Desktop/sensitive-project"
+    ]
+  },
+  "characters": {
+    "helper": {
+      "name": "Max",
+      "role": "Assistant",
+      "holo": "#6fd3ff",
+      "extra": "tie"
+    },
+    "reviewer": {
+      "name": "Robin",
+      "role": "Code review",
+      "body": "#2f6b4f",
+      "hair": "#1c1c1c",
+      "skin": "#e0b48a",
+      "extra": "glasses"
+    },
+    "old-name": {
+      "alias": "reviewer"
+    }
+  }
 }

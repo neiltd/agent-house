@@ -9,7 +9,7 @@ import { encodeDir } from '../lib/answer.mjs';
 
 const HERE = path.dirname(new URL(import.meta.url).pathname);
 const APP = path.resolve(HERE, '..');
-const PORT = 4319;
+const PORT = Number(process.env.E2E_PORT || 4391); // 4319 is taken by another local preview
 const T = fs.mkdtempSync(path.join(os.tmpdir(), 'house-e2e-'));
 const ROOT = path.join(T, 'projects'), STATE = path.join(T, 'state'), PAIR = path.join(T, 'pair.txt');
 const PROJ = fs.realpathSync(fs.mkdirSync(path.join(T, 'proj'), { recursive: true }) || path.join(T, 'proj'));

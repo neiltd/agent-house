@@ -44,6 +44,7 @@ Copy `agent-house.config.example.json` to `agent-house.config.json` and edit it.
 | `school` | `[{ "prefix": "Documents/University", "name": "Uni" }]` gives each course folder there a classroom in a School wing. Assignment folders inside a course share its room. |
 | `colors` | Fixed colours per room id. |
 | `robots` | Room ids whose main session is drawn as a robot. |
+| `characters` | Give named subagents one look everywhere, keyed by agent name: `{ "reviewer": { "name": "Robin", "role": "Code review", "body": "#2f6b4f", "hair": "#1c1c1c", "skin": "#e0b48a", "extra": "glasses" } }`. Use `"holo": "<colour>"` to draw a hologram, and `"alias": "<other key>"` for an old name. Extras: glasses, tie, hood, vest, beret, ponytail, longhair, headset, visor, shield, book, clipboard, magnifier (`accent` sets their colour). Teammates who aren't working sit in the Staff Room; holograms wait in the Control Room. A Team panel shows where everyone is. |
 | `answering` | `{ "enabled": true, "waitSeconds": 45, "exclude": ["Desktop/sensitive-project"] }`. See below. |
 
 ## Answering from the page (optional)
