@@ -38,8 +38,9 @@
     "helper": {
       "name": "Max",
       "role": "Assistant",
-      "holo": "#6fd3ff",
-      "extra": "tie"
+      "extra": "tie",
+      "sprite": "example",
+      "star": "#6fd3ff"
     },
     "reviewer": {
       "name": "Robin",
@@ -47,7 +48,8 @@
       "body": "#2f6b4f",
       "hair": "#1c1c1c",
       "skin": "#e0b48a",
-      "extra": "glasses"
+      "extra": "glasses",
+      "sprite": "example"
     },
     "old-name": {
       "alias": "reviewer"

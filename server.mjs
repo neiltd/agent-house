@@ -428,6 +428,11 @@ const server = http.createServer((req, res) => {
     json(res, nb ? 200 : 404, nb ? { log: nb } : { error: 'no such agent' });
   } else if (url.pathname.startsWith('/api/chat')) {
     cockpit(req, res, url).catch(() => { if (!res.writableEnded) json(res, 500, { error: 'server error' }); });
+  } else if (url.pathname === '/characters.json') {
+    // Character sprites: your own set in characters.local.json (git-ignored), else the generic example.
+    const f = [path.join(HERE, 'characters.local.json'), path.join(HERE, 'characters.example.json')].find((x) => fs.existsSync(x));
+    if (!f) return json(res, 404, { error: 'no characters file' });
+    fs.readFile(f, (err, buf) => { if (err) return json(res, 500, { error: 'read error' }); res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' }).end(buf); });
   } else if (url.pathname === '/api/me') {
     json(res, 200, { paired: isPaired(req), answering: answeringOn(), canPair });
   } else if (url.pathname === '/api/answer') {

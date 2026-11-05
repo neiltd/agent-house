@@ -3,3 +3,5 @@ node_modules/
 # your own setup; copy agent-house.config.example.json to start
 agent-house.config.json
 docs/private/
+# your own character sprites (served at /characters.json)
+characters.local.json

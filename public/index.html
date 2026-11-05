@@ -286,9 +286,11 @@ const projColor = (id) => (snap && snap.colors && snap.colors[id]) || FIXED[id] 
 const lookOf = (label) => {
   const all = (snap && snap.characters) || {}; let k = String(label || '').toLowerCase(), l = all[k], guard = 0;
   while (l && l.alias && guard++ < 3) { k = l.alias; l = all[k]; }
-  return l ? { key: k, ...l } : null;
+  return l ? normLook(k, l) : null;
 };
-const teamList = () => Object.entries((snap && snap.characters) || {}).filter(([, l]) => !l.alias && l.team !== false).map(([k, l]) => ({ key: k, ...l }));
+/** "star" (or legacy "holo") marks a house AI: holo = its colour. glow only for legacy configs without a sprite. */
+const normLook = (k, l) => ({ key: k, ...l, holo: l.star || l.holo || null, glow: !!(l.holo && !l.star) });
+const teamList = () => Object.entries((snap && snap.characters) || {}).filter(([, l]) => !l.alias && l.team !== false).map(([k, l]) => normLook(k, l));
 const agentColor = (label) => PALETTE[hash(label) % PALETTE.length];
 const HAIR = ['#1c1c1c', '#3b2416', '#7a3b1c', '#d9b36a', '#2a1a10', '#cfcfcf'];
 const SKIN = ['#e0b48a', '#c98e66', '#b8805a', '#d6a57a', '#f0c9a0'];
@@ -824,7 +826,7 @@ function drawDreamRoofs(t) {
 }
 /** Staff room extras: wood-framed glass doors onto an always-sunny garden, and the trophy shelf. */
 function dreamStaffExtras(r, fy) {
-  const gx = r.x + r.w - 70, gy = r.y + 8, gw = 60, gh = 40;
+  const gx = r.x + r.w - 56, gy = r.y + 8, gw = 52, gh = 40;
   rect('#b8702a', gx - 2, gy - 2, gw + 4, gh + 4); const g = ctx.createLinearGradient(0, gy, 0, gy + gh); g.addColorStop(0, '#4f97d9'); g.addColorStop(1, '#bfe3f5'); ctx.fillStyle = g; ctx.fillRect(gx, gy, gw, gh);
   rect('#eef3f8', gx + 8, gy + 6, 14, 4); rect('#eef3f8', gx + 12, gy + 4, 8, 3); rect('#eef3f8', gx + 36, gy + 10, 16, 4);
   rect('#3f8a4f', gx, gy + gh - 12, gw, 12); rect('#2f6b3d', gx, gy + gh - 14, gw, 3); rect('#56924f', gx, gy + gh - 11, gw, 1);
@@ -1009,9 +1011,69 @@ function drawPlaces(t) {
   if (asks) { rect('#e3a72f', 493, groundY - 29, 1, 8); rect('#e3a72f', 494, groundY - 29, 4, 3); if (reduce || Math.floor(t * 2.5) % 2 === 0) { rect('#ff6b5e', 479, groundY - 37, 16, 10); text(String(asks), 487, groundY - 36, '#1b0d0b', 'center'); } }
   else rect('#e3a72f', 493, groundY - 19, 4, 1);
 }
+/* ---------- sprites: pixel-map characters from /characters.json (config "characters.<key>.sprite") ---------- */
+let SPR = null;
+function bake(rows, palette) {
+  const h = rows.length, w = rows[0].length, c = document.createElement('canvas'); c.width = w; c.height = h;
+  const g = c.getContext('2d'); let top = h;
+  rows.forEach((row, y) => { for (let x = 0; x < row.length; x++) { const ch = row[x]; if (ch !== '.' && palette[ch]) { g.fillStyle = palette[ch]; g.fillRect(x, y, 1, 1); if (y < top) top = y; } } });
+  return { c, w, h, top };
+}
+function loadSprites(j) {
+  const out = { sprites: {}, star: j.star || null, starCache: {} };
+  for (const [key, sp] of Object.entries(j.sprites || {})) {
+    const f1 = {}, f2 = {};
+    for (const [n, rows] of Object.entries(sp.frames || {})) f1[n] = bake(rows, sp.palette || {});
+    for (const [n, rows] of Object.entries(sp.frames2x || {})) f2[n] = bake(rows, sp.palette || {});
+    let comp = null;
+    if (sp.companion) { comp = {}; for (const [n, rows] of Object.entries(sp.companion.frames || { idle: sp.companion.rows })) comp[n] = bake(rows, sp.companion.palette || {}); }
+    out.sprites[key] = { f1, f2, comp, top: (f1.idle || Object.values(f1)[0] || { top: 0 }).top };
+  }
+  return out;
+}
+fetch('/characters.json').then((r) => (r.ok ? r.json() : null)).then((j) => { if (j) SPR = loadSprites(j); }).catch(() => {});
+const spriteOf = (L) => (SPR && L && L.sprite && SPR.sprites[L.sprite]) || null;
+function starImg(colour, twinkle, hi) {
+  if (!SPR || !SPR.star) return null;
+  const k = colour + (twinkle ? '2' : '1') + (hi ? 'h' : '');
+  if (!SPR.starCache[k]) { const st = SPR.star, set = hi && st.frames2x ? st.frames2x : st.frames; SPR.starCache[k] = bake(set[twinkle ? 'star2' : 'star1'], { s: colour, ...(st.palette || {}) }); }
+  return SPR.starCache[k];
+}
+/** Which frame to show: kind is walk | type | idle | pose | free. Reduced motion holds a single frame. */
+function frameName(kind, t) {
+  if (kind === 'walk') return reduce ? 'idle' : 'walk' + (1 + (Math.floor(t * 8) % 2));
+  if (kind === 'type') return reduce ? 'type1' : 'type' + (1 + (Math.floor(t * 7) % 2));
+  if (kind === 'free') return reduce ? 'free1' : 'free' + (1 + (Math.floor(t * 1.1) % 2));
+  return kind === 'pose' ? 'pose' : 'idle';
+}
+/** Blits a sprite centred on x, feet on fy. In the close-up (o.hi) the 2x map is drawn in the same footprint. Returns the label top. */
+function drawSprite(L, spr, x, fy, t, o) {
+  const set = o.hi && Object.keys(spr.f2).length ? spr.f2 : spr.f1, name = frameName(o.kind || 'idle', t);
+  const img = set[name] || set.idle || Object.values(set)[0]; if (!img) return fy - 17;
+  const x0 = Math.round(x) - 5, y0 = Math.round(fy) - 19;
+  if (o.face < 0) { ctx.save(); ctx.translate(x0 + 11, y0); ctx.scale(-1, 1); ctx.drawImage(img.c, 0, 0, 11, 20); ctx.restore(); }
+  else ctx.drawImage(img.c, x0, y0, 11, 20);
+  let top = y0 + spr.top;
+  if (L.holo) { // the house AIs: a little star floats above the head
+    const tw = !reduce && Math.floor(t * 1.3 + x * 0.1) % 7 === 0, bob = reduce ? 0 : Math.round(Math.sin(t * 2 + x * 0.3));
+    const st = starImg(L.holo, tw, o.hi);
+    if (st) { const sy = top - (SPR.star.gap || 3) - 5 + bob; ctx.drawImage(st.c, Math.round(x) - 2, sy, 5, 5); top = sy; }
+  }
+  return top;
+}
+/** Sage's dog (or any companion): trots a few px behind its owner, hidden while she sits. */
+function drawCompanion(spr, x, fy, t, walking, face) {
+  if (!spr || !spr.comp) return;
+  const img = (walking && !reduce && Math.floor(t * 8) % 2 && spr.comp.walk) || spr.comp.idle; if (!img) return;
+  const dx = Math.round(x) - (face < 0 ? -7 : 11);
+  if (face < 0) { ctx.save(); ctx.translate(dx + img.w, fy - img.h); ctx.scale(-1, 1); ctx.drawImage(img.c, 0, 0); ctx.restore(); }
+  else ctx.drawImage(img.c, dx, fy - img.h);
+}
 /** Draws one person standing on floor line fy at x. Returns the top y. Handles holograms and accessories. */
 function drawPerson(c, x, fy, t, o = {}) {
-  const L = c.look || {}, holo = L.holo;
+  const L = c.look || {}, holo = L.glow ? L.holo : null;
+  const spr = spriteOf(L);
+  if (spr) return drawSprite(L, spr, x, fy, t, { ...o, kind: o.kind || (o.still === false ? 'walk' : o.bob !== undefined && o.typing ? 'type' : 'idle') });
   if (holo) {
     // A hologram floats, glows and flickers a little.
     fy -= 2 + (reduce ? 0 : Math.round(Math.sin(t * 2 + x) * 1));
@@ -1033,7 +1095,9 @@ function drawPerson(c, x, fy, t, o = {}) {
   if (o.reading) { rect('#c94f3d', x - 3, fy - 10, 6, 4); rect('#f1e8d4', x, fy - 10, 1, 4); }
   if (o.sub) rect('#f1e8d4', x - 1, fy - 9, 2, 1);
   drawExtra(L, x, fy, t, o, false);
-  return fy - 17;
+  let top = fy - 17;
+  if (L.holo && !L.glow) { const st = starImg(L.holo, false, false); if (st) { ctx.drawImage(st.c, Math.round(x) - 2, top - 8, 5, 5); top -= 8; } }
+  return top;
 }
 /** Accessories that make a teammate recognisable: config "extra": "glasses tie hood vest beret ponytail longhair headset book clipboard shield magnifier visor". */
 function drawExtra(L, x, fy, t, o, holo) {
@@ -1060,13 +1124,23 @@ function drawStaff(r, t) {
   if (theme() === 'dream') dreamStaffExtras(r, fy);
   else { rect('#2b2f3a', r.x + r.w - 18, fy - 16, 10, 16); rect('#c94f3d', r.x + r.w - 16, fy - 13, 6, 3); rect('#f1e8d4', r.x + r.w - 15, fy - 6, 3, 2); } // coffee machine
   const free = teamList().filter((l) => !l.holo && !atWork().has(l.key));
-  free.slice(0, 7).forEach((l, i) => {
-    const c = { look: l, body: l.body || '#777', hair: l.hair || '#2a1a10', skin: l.skin || '#e0b48a' };
-    const x = r.x + 12 + i * 13;
-    drawPerson(c, x, fy - 3, t, { still: false });
-    if (!reduce && Math.floor(t * 0.7 + i) % 3 === 0) text('Z', x + 4, fy - 30, '#a6aed2');
+  // free-time spots (Andrea's furniture table): sofa seats, an armchair, the green chair, the coffee machine, a blackboard
+  const SPOTS = { raphael: { dx: 15, seat: 6 }, claires: { dx: 30, seat: 6 }, kai: { dx: 45, seat: 6 }, sage: { dx: 64, seat: 6, armchair: true }, andrea: { dx: 82, seat: 6, chair: true }, warden: { dx: 116, seat: 0 }, mark: { dx: 132, seat: 0, board: true } };
+  let extra = 0;
+  free.forEach((l) => {
+    const c = { look: l, body: l.body || '#777', hair: l.hair || '#2a1a10', skin: l.skin || '#e0b48a' }, sp = SPOTS[l.key];
+    const spr = spriteOf(l);
+    if (!sp || !spr) { // no sprite: the old dozing look, lined up after the named spots
+      const x = r.x + 150 + extra++ * 13; if (x > r.x + r.w - 10) return;
+      drawPerson(c, x, fy - 3, t, { still: false }); if (!reduce && Math.floor(t * 0.7 + extra) % 3 === 0) text('Z', x + 4, fy - 30, '#a6aed2');
+      return;
+    }
+    const x = r.x + sp.dx;
+    if (sp.armchair) { rect('#5b3b5e', x - 8, fy - 14, 16, 14); rect('#6e4a72', x - 7, fy - 8, 14, 3); rect('#5b3b5e', x - 9, fy - 10, 2, 8); rect('#5b3b5e', x + 7, fy - 10, 2, 8); }
+    if (sp.chair) { rect('#3f8a4f', x - 6, fy - 7, 12, 2); rect('#2f6b3d', x + 3, fy - 16, 3, 10); rect('#2f6b3d', x - 5, fy - 5, 1, 5); rect('#2f6b3d', x + 4, fy - 5, 1, 5); }
+    if (sp.board) { const bx = x + 6; rect('#d9c9a3', bx - 1, fy - 31, 16, 14); rect('#2f4a3a', bx, fy - 30, 14, 12); for (let i = 0; i < 3; i++) rect('#f1e8d4', bx + 2 + (i * 4) % 10, fy - 27 + i * 3, 2 + (i % 2) * 3, 1); }
+    drawSprite(l, spr, x, fy - sp.seat, t, { kind: 'free', face: sp.board ? 1 : 1 });
   });
-  if (free.length > 7) text('+' + (free.length - 7), r.x + 98, fy - 34, '#f1e8d4');
 }
 /** JARVIS, FRIDAY and EDITH make rounds: each visits the busy rooms in turn, beaming in and out. Idle: the control room. */
 function drawControlCrew(t) {
@@ -1075,14 +1149,20 @@ function drawControlCrew(t) {
   const spots = theme() === 'dream' && DG ? [{ x: DG.ctrl.x0 + 26, y: DG.ctrl.floorY }, { x: DG.ctrl.x1 - 26, y: DG.ctrl.floorY }, { x: DG.turret.cx, y: DG.turret.floorY }] : [{ x: 165, y: 59 }, { x: 306, y: 59 }, { x: 346, y: 59 }];
   crew.slice(0, 3).forEach((l, k) => {
     const c = { look: l };
-    if (!busy.length) { const x = spots[k].x; const top = drawPerson(c, x, spots[k].y, t, { still: true }); text(String(l.name || l.key).toUpperCase(), x, top - 9, l.holo, 'center'); return; }
+    const post = (sp) => { // at their post: their free-time loop (FRIDAY in an armchair)
+      let fy2 = sp.y;
+      if (l.key === 'friday' && spriteOf(l)) { rect('#5b3b5e', sp.x - 8, sp.y - 14, 16, 14); rect('#6e4a72', sp.x - 7, sp.y - 8, 14, 3); fy2 = sp.y - 6; }
+      const top = drawPerson(c, sp.x, fy2, t, { still: true, kind: 'free' }); text(String(l.name || l.key).toUpperCase(), sp.x, top - 9, l.holo, 'center');
+    };
+    const keyed = { jarvis: 0, friday: 1, edith: 2 }; const mySpot = spots[keyed[l.key] ?? k] || spots[k];
+    if (!busy.length) return post(mySpot);
     const period = 12, clock = t + k * 4, slot = Math.floor(clock / period), u = (clock % period) / period;
     const r = busy[(slot + k) % busy.length], fy = floorY(r);
     // how many of the three are visiting this same room right now: give each one room for its name
     const sharing = crew.slice(0, 3).map((_, j) => busy[(Math.floor((t + j * 4) / period) + j) % busy.length]).slice(0, k).filter((rr) => rr === r).length;
     const x = r.x + r.w - 16 - sharing * 34;
     const crowd = [...chars.values()].filter((cc) => cc.room === r && cc.where === 'room').length;
-    if (x < r.x + 12 || (r.w < 100 && crowd + sharing >= 2)) { const sp = spots[k]; const top0 = drawPerson(c, sp.x, sp.y, t, { still: true }); text(String(l.name || l.key).toUpperCase(), sp.x, top0 - 9, l.holo, 'center'); return; } // no room here: wait in the Control Room
+    if (x < r.x + 12 || (r.w < 100 && crowd + sharing >= 2)) return post(mySpot); // no room here: wait at their post
     const fade = reduce ? 1 : Math.min(1, u / 0.08, (1 - u) / 0.08);
     ctx.save(); ctx.globalAlpha = Math.max(0, fade);
     const prev = ctx.globalAlpha, top = drawPerson(c, x, fy, t, { still: true }); ctx.globalAlpha = prev;
@@ -1160,7 +1240,8 @@ function drawRoomView(r, t) {
   const slots = here.length ? here.map((c, i) => 90 + i * Math.min(70, (VW - 190) / Math.max(1, here.length))) : [];
   here.forEach((c, i) => {
     const x = Math.round(slots[i]), a = c.a;
-    const topY = drawPerson(c, x, fy, t, { reading: a.state === 'reading', bob: a.state === 'typing' && !reduce ? Math.floor(t * 7) % 2 : 0, still: true, sub: a.kind === 'sub' && !c.look });
+    const topY = drawPerson(c, x, fy, t, { hi: true, kind: a.state === 'typing' ? 'type' : ['idle', 'waiting'].includes(a.state) ? 'pose' : 'idle', reading: a.state === 'reading', bob: a.state === 'typing' && !reduce ? Math.floor(t * 7) % 2 : 0, still: true, sub: a.kind === 'sub' && !c.look });
+    drawCompanion(spriteOf(c.look), x, fy, t, false, 1);
     text(c.name, x, topY - 10, ui.sel?.kind === 'agent' && ui.sel.id === c.key ? '#ffd27a' : '#f1e8d4', 'center');
     const what = a.state === 'waiting' ? 'WAITING ON YOU' : a.tool ? `${a.tool}${a.target ? ' ' + a.target : ''}` : (STATE_LABEL[a.state] || a.state);
     const line = fitText(String(what).toUpperCase(), 66);
@@ -1179,10 +1260,10 @@ function drawRoomView(r, t) {
     2: waiting ? 'SOMETHING NEEDS YOUR OK' : 'ALL CLEAR',
   };
   crew.forEach((l, k) => {
-    const spot = VW - 104 + k * 32, p = reduce ? 1 : Math.min(1, (t - ui.view.since - k * 0.5) / 2);
+    const spot = VW - 140 + k * 42, p = reduce ? 1 : Math.min(1, (t - ui.view.since - k * 0.5) / 2);
     if (p <= 0) return;
     const x = Math.round(VW - 8 - (VW - 8 - spot) * (1 - Math.pow(1 - p, 2)));
-    const topY = drawPerson({ look: l }, x, fy, t, { still: p >= 1 });
+    const topY = drawPerson({ look: l }, x, fy, t, { hi: true, still: p >= 1, kind: p >= 1 ? 'pose' : 'walk', face: -1 });
     text(String(l.name || l.key).toUpperCase(), x, topY - 9, l.holo, 'center');
     if (p >= 1) { const msg = `${String(l.name || l.key).toUpperCase()}: ${says[k]}`, bw = pxw(msg) + 10, by = 24 + k * 12; rect('rgba(8,10,24,.85)', 70, by, bw, 10); rect(l.holo, 70, by, 2, 10); text(msg, 76, by + 1, '#f1e8d4'); }
   });
@@ -1199,7 +1280,12 @@ function drawChar(c, t) {
     rect('#9aa3b5', x, fy - 19, 1, 3); rect('#e0672f', x, fy - 20, 1, 1); top = fy - 20;
   } else {
     const bob = a.state === 'typing' && !walking && !reduce ? Math.floor(t * 7) % 2 : 0;
-    top = drawPerson(c, x, fy, t, { step, bob, reading: a.state === 'reading' && !walking, sub: a.kind === 'sub' && !c.look, still: !walking });
+    if (c.px != null && Math.abs(c.x - c.px) > 0.05) c.face = c.x < c.px ? -1 : 1; c.px = c.x;
+    // the signature pose shows for ~2 s every ~20 s while idle at a desk
+    const posing = !walking && ['idle', 'thinking'].includes(a.state) && !reduce && (t + (hash(c.key) % 20)) % 20 < 2;
+    const kind = walking ? 'walk' : a.state === 'typing' ? 'type' : posing ? 'pose' : 'idle';
+    top = drawPerson(c, x, fy, t, { step, bob, kind, face: c.face || 1, reading: a.state === 'reading' && !walking, sub: a.kind === 'sub' && !c.look, still: !walking });
+    drawCompanion(spriteOf(c.look), x, fy, t, walking, c.face || 1);
   }
   if (!walking && ['waiting', 'thinking', 'idle'].includes(a.state)) {
     // Bubble sits right of the name label so it never covers it.
