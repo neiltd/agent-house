@@ -333,7 +333,9 @@ function computeLayout() {
     { x0: 40, x1: 440, h: 76, r: [1.4, 1, 1.1] },        // narrower again
   ];
   const SCHOOL_FLOOR = { x0: 24, x1: 456, h: 64, r: [1, 1, 1, 1, 1], school: true };
-  const out = [], GAP = 4;
+  const dream = theme() === 'dream';
+  let out = [];
+  const GAP = 4;
   floors = [];
   let y = 64, wi = 0;
   const putFloor = (spec, ids, school) => {
@@ -351,13 +353,16 @@ function computeLayout() {
     y += spec.h + 8;
   };
   const main = slots.main.length ? [...slots.main] : [null];
-  for (let f = 0, i = 0; i < main.length; f++) { const spec = PLAN[f < PLAN.length ? f : 1 + ((f - 1) % (PLAN.length - 1))]; putFloor(spec, main.slice(i, i + spec.r.length), false); i += spec.r.length; }
-  for (let i = 0; i < slots.school.length; i += SCHOOL_FLOOR.r.length) putFloor(SCHOOL_FLOOR, slots.school.slice(i, i + SCHOOL_FLOOR.r.length), true);
+  if (dream) { out = dreamLayout(slots, byId); y = DG.G + 4; }
+  else for (let f = 0, i = 0; i < main.length; f++) { const spec = PLAN[f < PLAN.length ? f : 1 + ((f - 1) % (PLAN.length - 1))]; putFloor(spec, main.slice(i, i + spec.r.length), false); i += spec.r.length; }
+  if (!dream) for (let i = 0; i < slots.school.length; i += SCHOOL_FLOOR.r.length) putFloor(SCHOOL_FLOOR, slots.school.slice(i, i + SCHOOL_FLOOR.r.length), true);
   groundY = y - 4;
   const by = groundY + 8;
   const homeP = projs.find((p) => p.id === 'home') || { id:'home', name:'Home Office', week:{w:0,raw:0}, today:{w:0,raw:0} };
-  out.push({ id:'home', p: homeP, label:'Home office', x:24, y:by, w:150, h:60, wall:'#4b3b5c', pat:'#55446a', kind:'panel' });
-  out.push({ id:'staff', p:{ id:'staff', name:'Staff Room', week:{w:0,raw:0}, today:{w:0,raw:0} }, label:'Staff room', x:178, y:by, w:278, h:60, wall:'#3f5a4a', pat:'#476553', kind:'stripe', staff: true });
+  out.push({ id:'home', p: homeP, label:'Home office', x: dream ? 128 : 24, y:by, w: dream ? 102 : 150, h:60, wall:'#4b3b5c', pat:'#55446a', kind:'panel' });
+  out.push({ id:'staff', p:{ id:'staff', name:'Staff Room', week:{w:0,raw:0}, today:{w:0,raw:0} }, label:'Staff room', x: dream ? 254 : 178, y:by, w: dream ? 204 : 278, h:60,
+    wall: dream ? '#8f3a2a' : '#3f5a4a', pat: dream ? '#9d4634' : '#476553', kind: dream ? 'panel' : 'stripe', staff: true });
+  if (dream) for (const r of out) r.route = dreamRoute(r);
   H = by + 60 + 14 + TOP();
   rooms = out;
   roomOf = {};
@@ -422,7 +427,7 @@ function syncChars() {
       chars.set(a.key, c);
       c.room = room;
       // A named teammate walks in from the stairs at the room's edge; everyone else starts at a desk.
-      c.x = look ? (hasLift() ? LIFT_X : room.x + 3) : stationX(c, 'desk');
+      c.x = look ? (hasLift() && room.route ? room.route[0].x : room.x + 3) : stationX(c, 'desk'); // named teammates arrive by their room's lift
     }
     // Rooms are rebuilt on every update, so compare by id: only a real move to another room resets position.
     if (c.room.id !== room.id && c.where === 'room') c.x = room.x + 20;
@@ -450,26 +455,31 @@ function syncChars() {
   }
 }
 const arrived = (c) => c.where === c.goal.where && Math.abs(c.x - c.goal.x) < 0.6;
-const charY = (c) => c.where === 'lift' ? c.ly : c.where === 'street' ? groundY : floorY(c.room);
+const charY = (c) => c.where === 'path' ? c.y : c.where === 'lift' ? c.ly : c.where === 'street' ? groundY : floorY(c.room);
 /* The lift: a glass lift on the right of the house, with a balcony on every floor. Its ground stop is the front door. */
 const LIFT_X = 464, LIFT_W = 12;
-const hasLift = () => false; // switched on once the asymmetric layout places the lifts
+const hasLift = () => theme() === 'dream';
 function move(c, dt) {
   if (hasLift()) return moveByLift(c, dt);
   moveSimple(c, dt);
 }
+/** Dream theme: every room has a route from its floor to the ground (spine lift, bridge + stair, rope ladder, or the leaning tube). */
 function moveByLift(c, dt) {
-  const sp = 46 * dt, lsp = 60 * dt, fy = floorY(c.room);
-  const walkTo = (x) => { const d = x - c.x; if (reduce || Math.abs(d) <= sp) { c.x = x; return true; } c.x += Math.sign(d) * sp; return false; };
-  if (c.where === 'lift') {
-    const target = c.liftTo === 'street' ? groundY : fy, d = target - c.ly;
-    if (reduce || Math.abs(d) <= lsp) { c.ly = target; c.where = c.liftTo; c.x = LIFT_X; }
-    else c.ly += Math.sign(d) * lsp;
+  const sp = 46 * dt, vsp = 60 * dt;
+  if (c.where === 'path') {
+    const p = c.path && c.path[0];
+    if (!p) { c.where = c.pathTo; c.path = null; }
+    else {
+      const dx = p.x - c.x, dy = p.y - c.y, d = Math.hypot(dx, dy), step = Math.abs(dy) > Math.abs(dx) ? vsp : sp;
+      if (reduce || d <= step) { c.x = p.x; c.y = p.y; c.path.shift(); if (!c.path.length) { c.where = c.pathTo; c.path = null; } }
+      else { c.x += (dx / d) * step; c.y += (dy / d) * step; }
+    }
   } else if (c.where !== c.goal.where) {
-    // walk to the lift on this level, then ride
-    // riding up from the street starts at the ground; riding down starts at this room's floor
-    if (walkTo(LIFT_X)) { c.ly = c.goal.where === 'room' ? groundY : fy; c.liftTo = c.goal.where; c.where = 'lift'; }
-  } else walkTo(c.goal.x);
+    const route = (c.room && c.room.route) || [];
+    if (c.goal.where === 'street') { c.path = route.map((q) => ({ ...q })); c.y = floorY(c.room); }
+    else { c.path = [...route].reverse().map((q) => ({ ...q })); c.y = groundY; }
+    c.pathTo = c.goal.where; c.where = 'path';
+  } else { const d = c.goal.x - c.x; if (reduce || Math.abs(d) <= sp) c.x = c.goal.x; else c.x += Math.sign(d) * sp; }
   c.inside = c.a.state === 'outside' && arrived(c);
 }
 function moveSimple(c, dt) {
@@ -499,9 +509,10 @@ const stars = Array.from({ length: 70 }, (_, i) => ({ x: (i * 97) % W, y: (i * 3
 function drawWorld(t) {
   drawSky(t);
   rect('#2e2119', 0, groundY + 4, W, H - TOP() - groundY);
-  if (theme() === 'victorian') {
+  if (theme() === 'victorian' || theme() === 'dream') {
     drawGrounds(t);
-    rect('#8d8a7e', 476, groundY + 3, W - 476, 6); rect('#a19e92', 476, groundY + 3, W - 476, 1); // gravel path to the village
+    const px = theme() === 'dream' ? 254 : 476;
+    rect('#8d8a7e', px, groundY + 3, W - px, 6); rect('#a19e92', px, groundY + 3, W - px, 1); // gravel path to the village
   } else {
     rect('#3f6b3a', 0, groundY - 1, 480, 5); rect('#4f8447', 0, groundY - 1, 480, 1);
     rect('#8a8f9c', 476, groundY - 1, W - 476, 4); rect('#3a3d47', 476, groundY + 3, W - 476, 12);
@@ -510,6 +521,7 @@ function drawWorld(t) {
   drawWeather(t);
   text('THE INTERNET', 624, groundY - 140, sky().phase === 'day' ? '#3d4a7a' : '#6e77a3', 'center');
   if (theme() === 'victorian') return drawVictorianBody(t);
+  if (theme() === 'dream') return drawDreamBody(t);
   rect('#5d3a22', 16, 60, 448, groundY - 60);
   rect('#4a2f1c', 16, groundY + 4, 448, H - TOP() - groundY - 12);
 }
@@ -591,6 +603,239 @@ function drawWeather(t) {
   if (code === 45 || code === 48) { ctx.globalAlpha = .35; for (let i = 0; i < 4; i++) rect('#c9cfd8', 0, groundY - 30 - i * 18, W, 8); ctx.globalAlpha = 1; }
 }
 
+/* ---------- Dream theme: an impossible mansion (Andrea's v2 design) ----------
+   Two mismatched stacks glued to a glass spine lift, a floating wing with an upside-down room on chains,
+   a leaning school tower with a diagonal tube, EDITH's turret on a stalk, and one tilted roof.
+   Everything is placed relative to the ground line, which is computed so the whole house fits; rooms never size by usage. */
+const D_WALLS = [
+  ['#8f3a2a', '#9d4634', 'panel'], ['#1f5f66', '#276b72', 'stripe'], ['#4c6a3a', '#567845', 'dots'], ['#5b3f6b', '#674a78', 'diamond'],
+  ['#8a6a2a', '#967636', 'panel'], ['#304f6e', '#395b7c', 'brick'], ['#7a3940', '#86434a', 'dots'], ['#2c5e5a', '#336b66', 'stripe'],
+];
+const D_IRON = '#2a2a30', D_GLASS = 'rgba(159,211,232,.45)', D_GLASS_D = '#6fa6bd', D_WARM = '#ffd27a', D_WARM_D = '#e3a72f', D_DARK_WIN = '#2b3550';
+const D_FLOOR_A = '#d9c9a3', D_FLOOR_B = '#b8865a', D_TEAL = '#2b7a78', D_TEAL_D = '#1f5f66', D_GREEN_D = '#2f6b3d', D_COPPER = '#4f8a7a', D_COPPER_D = '#3a6b5e';
+const D_LEFT = [{ x0: 120, h: 64 }, { x0: 92, h: 56 }, { x0: 140, h: 60 }, { x0: 108, h: 50 }, { x0: 150, h: 56 }, { x0: 128, h: 56 }];
+const D_RIGHT = [{ x1: 372, h: 52 }, { x1: 396, h: 64 }, { x1: 352, h: 50 }, { x1: 410, h: 60 }, { x1: 380, h: 48 }, { x1: 340, h: 56 }];
+const D_SPINE = { x: 236, w: 12 }, D_SLAB = 6, D_SX = 242; // riders stand in the middle of the spine
+const D_BASE_SLOTS = ['L0', 'R0', 'L1', 'R1', 'F0', 'L2', 'R2', 'H', 'L3', 'R3', 'F1', 'L4', 'R4', 'L5', 'R5'];
+const D_VACANT = { id: 'vacant', name: 'Empty room', week: { w: 0, raw: 0 }, today: { w: 0, raw: 0 } };
+let DG = null; // the current dream geometry
+const dTubeX = (y) => Math.round(388 + 24 * (DG.G - y) / 268); // the tube leans 24px over 268px of height
+
+function dreamGeometry(G, nL, nR, nE) {
+  const stack = (pat, side, bottom0, n) => {
+    let bottom = bottom0; const out = [];
+    for (let i = 0; i < n; i++) {
+      const f = pat[i % pat.length], r = { i, side, h: f.h, y: bottom - f.h, bottom };
+      if (side === 'L') { r.x = f.x0; r.w = D_SPINE.x - f.x0; } else { r.x = D_SPINE.x + D_SPINE.w; r.w = f.x1 - r.x; }
+      bottom = r.y - D_SLAB; out.push(r);
+    }
+    return out;
+  };
+  const L = stack(D_LEFT, 'L', G - 4, nL), R = stack(D_RIGHT, 'R', G - 4 - 28, nR);
+  const LEFT_TOP = L[nL - 1].y - D_SLAB, RIGHT_TOP = R[nR - 1].y - D_SLAB;
+  const F = [{ x: 6, w: 80, y: L[3].bottom - 52, h: 52, bottom: L[3].bottom }, { x: 6, w: 80, y: L[3].bottom - 52 - D_SLAB - 56, h: 56, bottom: L[3].bottom - 52 - D_SLAB }];
+  const F_TOP = F[1].y - D_SLAB;
+  const HANG = { x: 14, w: 64, y: F[0].bottom + 12, h: 46 }; HANG.bottom = HANG.y + HANG.h;
+  const TOWER = []; { let b = G - 4; for (let i = 0; i < nE; i++) { TOWER.push({ i, x: 400 + 6 * i, w: 76, y: b - 48, h: 48, bottom: b }); b = b - 48 - D_SLAB; } }
+  const yl = LEFT_TOP + 1, yr = RIGHT_TOP + 1, rh = 44;
+  const roof = { x0: L[nL - 1].x - 10, x1: R[nR - 1].x + R[nR - 1].w + 10, yl, yr, h: rh };
+  const ctrl = { x0: roof.x0 + 24, x1: roof.x1 - 30, y0: yr - rh - 2, y1: yr - 4 }; ctrl.floorY = ctrl.y1 - 3;
+  const turret = { cx: 388, r: 13, stalkTop: RIGHT_TOP, stalkBottom: R[nR - 2].y, bodyBottom: RIGHT_TOP + 2, bodyTop: RIGHT_TOP - 42, cone: 26 }; turret.floorY = turret.bodyBottom - 8;
+  const chimney = { x: 160, y: LEFT_TOP - 44 };
+  const floatRoof = { x0: F[1].x - 8, x1: F[1].x + F[1].w + 8, yb: F_TOP + 1, h: 30 };
+  const minY = Math.min(turret.bodyTop - turret.cone - 8, Math.min(yl, yr - 10) - rh - 6, chimney.y - 30, floatRoof.yb - floatRoof.h - 31, TOWER[TOWER.length - 1].y - 59, RIGHT_TOP - 16);
+  return { G, L, R, F, F_TOP, HANG, TOWER, LEFT_TOP, RIGHT_TOP, roof, ctrl, turret, chimney, floatRoof, BY: G + 8, minY };
+}
+
+/** Rooms for the dream house: the server's slots, in Andrea's slot order, then more stack floors as projects arrive. */
+function dreamLayout(slots, byId) {
+  const main = [...slots.main], order = [...D_BASE_SLOTS];
+  for (let k = 6; order.length < main.length; k++) order.push('L' + k, 'R' + k); // after slot 15 only the stacks grow
+  const nL = Math.max(6, ...order.filter((s) => s[0] === 'L').map((s) => +s.slice(1) + 1));
+  const nR = Math.max(6, ...order.filter((s) => s[0] === 'R').map((s) => +s.slice(1) + 1));
+  const school = slots.school.slice(0, 6), nE = Math.min(6, Math.max(5, school.length)); // the tower leans at most six courses
+  const probe = dreamGeometry(0, nL, nR, nE);
+  DG = dreamGeometry(26 - probe.minY, nL, nR, nE); // ground line: everything above fits with a little sky on top
+  const pos = (s) => (s === 'H' ? DG.HANG : s[0] === 'L' ? DG.L[+s.slice(1)] : s[0] === 'R' ? DG.R[+s.slice(1)] : DG.F[+s.slice(1)]);
+  const out = [];
+  const add = (id, base, i, label) => {
+    const p = id ? byId[id] : null, [wall, pat, kind] = D_WALLS[i % D_WALLS.length];
+    out.push(p ? { id: p.id, p, label: label(p), wall, pat, kind, ...base }
+               : { id: 'vacant-' + base.slot, p: D_VACANT, label: 'Free room', wall: '#3a3a42', pat: '#42424c', kind: 'panel', vacant: true, ...base });
+  };
+  order.forEach((s, i) => { const q = pos(s); add(main[i] ?? null, { x: q.x, y: q.y, w: q.w, h: q.h, slot: s, flip: s === 'H', carrier: s[0] === 'F' ? 'float' : s === 'H' ? 'ladder' : 'spine' }, i, (p) => p.name); });
+  DG.TOWER.forEach((q, i) => add(school[i] ?? null, { x: q.x, y: q.y, w: q.w, h: q.h, slot: 'E' + i, school: true, carrier: 'tube' }, i + 3, (p) => p.short || p.name));
+  return out;
+}
+/** Waypoints from a room's floor down to the ground stop. */
+function dreamRoute(r) {
+  const fy = r.y + r.h - 2, G = DG.G, L3 = DG.L[3], fyL3 = L3.y + L3.h - 2;
+  if (r.carrier === 'tube') return [{ x: dTubeX(fy) + 5, y: fy }, { x: dTubeX(G) + 5, y: G }];
+  if (r.carrier === 'float') return [{ x: 80, y: fy }, { x: 80, y: fyL3 }, { x: D_SX, y: fyL3 }, { x: D_SX, y: G }]; // stair, bridge, spine
+  if (r.carrier === 'ladder') return [{ x: 88, y: fy }, { x: 88, y: fyL3 }, { x: D_SX, y: fyL3 }, { x: D_SX, y: G }]; // rope ladder, bridge, spine
+  return [{ x: D_SX, y: fy }, { x: D_SX, y: G }];
+}
+
+/* drawing helpers */
+function dPoly(c, pts) { ctx.fillStyle = c; ctx.beginPath(); pts.forEach((p, i) => (i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]))); ctx.closePath(); ctx.fill(); }
+function dCircle(c, x, y, r) { ctx.fillStyle = c; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); }
+function dShade(x, y, w, h) { const tn = nightTint(); if (tn) rect(tn, x, y, w, h); }
+function dShadePoly(pts) { const tn = nightTint(); if (tn) dPoly(tn, pts); }
+function dStoneBand(x, y, w, h) { rect(STONE, x, y, w, h); ctx.fillStyle = STONE_D; for (let yy = y; yy < y + h; yy += 6) { ctx.fillRect(x, yy, w, 1); for (let xx = x + ((Math.floor(yy / 6)) % 2) * 6; xx < x + w; xx += 12) ctx.fillRect(xx, yy, 1, 6); } }
+function dLedge(x, y, w) { rect(TRIM, x, y, w, 3); rect(STONE_L, x, y, w, 1); for (let xx = x + 4; xx < x + w - 2; xx += 8) rect(STONE_D, xx, y + 3, 3, 2); }
+function dFrame(r) { dStoneBand(r.x - 6, r.y - 6, r.w + 12, r.h + 10); dLedge(r.x - 8, r.y + r.h, r.w + 16); }
+function dMiniRoof(a0, a1, y) { dPoly(SLATE, [[a0, y], [a0 + 3, y - 9], [a1 - 3, y - 9], [a1, y]]); rect(SLATE_L, a0 + 3, y - 10, a1 - a0 - 6, 1); for (let x = a0 + 5; x < a1 - 4; x += 5) rect(D_IRON, x, y - 13, 1, 3); }
+function dBrackets(a0, a1, y) { for (let x = a0 + 2; x < a1 - 2; x += 6) { rect(STONE_D, x, y, 3, 3); rect(STONE_D, x + 1, y + 3, 1, 3); } }
+function dStackExterior(list) {
+  list.forEach((r, i) => {
+    dFrame(r);
+    const below = list[i - 1], above = list[i + 1];
+    if (below) { if (r.x < below.x) dBrackets(r.x - 6, below.x - 6, r.y + r.h + 5); if (r.x + r.w > below.x + below.w) dBrackets(below.x + below.w + 6, r.x + r.w + 6, r.y + r.h + 5); }
+    if (above) { if (r.x < above.x) dMiniRoof(r.x - 7, above.x - 6, r.y - 5); if (r.x + r.w > above.x + above.w) dMiniRoof(above.x + above.w + 6, r.x + r.w + 7, r.y - 5); }
+  });
+  const top = list[list.length - 1]; dLedge(top.x - 8, top.y - 9, top.w + 16);
+  for (const r of list) dShade(r.x - 8, r.y - 14, r.w + 16, r.h + 20);
+}
+const dBusy = (pred) => [...chars.values()].some((c) => c.room && pred(c.room) && c.a && c.a.state !== 'idle');
+
+function drawDreamBody(t) {
+  const g = DG; if (!g) return;
+  const G = g.G, bottom = H - TOP();
+  // basement: earth with roots on the left, then the stone base under the two basement rooms
+  rect(BASE_STONE, 122, G + 4, 342, bottom - G - 12); ctx.fillStyle = BASE_STONE_D; for (let y = G + 8; y < bottom - 8; y += 7) ctx.fillRect(122, y, 342, 1);
+  rect('#3a2a1c', 0, G + 4, 122, bottom - G - 12);
+  for (const [x, dy, w] of [[12, 14, 30], [30, 30, 18], [60, 20, 40], [84, 46, 26], [40, 56, 50]]) rect('#2a1c12', x, G + dy, w, 2);
+  rect('#5a4a3a', 70, G + 40, 10, 6); rect('#8a8a96', 24, G + 48, 6, 4);
+  rect('#b8702a', 90, G + 52, 14, 10); rect('#e3a72f', 92, G + 54, 10, 2); rect('#e3a72f', 96, G + 57, 2, 3); // a buried chest
+  dShade(0, G + 4, 464, bottom - G - 12);
+  // plinth under the right stack
+  const px = D_SPINE.x + D_SPINE.w, pw = g.R[0].x + g.R[0].w + 6 - px;
+  dStoneBand(px, G - 32, pw, 36); dLedge(px, G - 32, pw); dShade(px, G - 32, pw, 36);
+  dStackExterior(g.L); dStackExterior(g.R); dStackExterior(g.F);
+  dFrame(g.HANG); dLedge(g.HANG.x - 8, g.HANG.y - 9, g.HANG.w + 16); dShade(g.HANG.x - 8, g.HANG.y - 12, g.HANG.w + 16, g.HANG.h + 20);
+  g.TOWER.forEach((q, i) => { dFrame(q); if (i) dBrackets(q.x + q.w - 2, q.x + q.w + 6, q.y + q.h + 5); dShade(q.x - 8, q.y - 10, q.w + 16, q.h + 18); });
+  const top = g.TOWER[g.TOWER.length - 1]; dLedge(top.x - 8, top.y - 9, top.w + 16);
+  // a spiral stair ribbon wraps the tower
+  for (let y = g.TOWER[0].bottom; y > top.y; y -= 2) { const k = (g.TOWER[0].bottom - y) / 40, x = dTubeX(y) + 12 + Math.round((Math.sin(k * Math.PI * 2) + 1) * 38); rect(y % 4 ? D_IRON : TRIM, x, y, 3, 1); }
+  // the floating wing throws a soft shadow on the lawn
+  ctx.globalAlpha = .35; ctx.fillStyle = '#0a0f1e'; ctx.beginPath(); ctx.ellipse(46, G + 1, 44, 3, 0, 0, Math.PI * 2); ctx.fill(); ctx.globalAlpha = 1;
+}
+const BASE_STONE = '#b9b6ad', BASE_STONE_D = '#a5a299';
+
+/** Interior touches from the kitchen reference: a patterned floor, and a chalkboard in classrooms. */
+function dreamInterior(r) {
+  for (let i = 0; i < r.w; i += 4) rect(((i / 4) % 2) ? D_FLOOR_A : D_FLOOR_B, r.x + i, r.y + r.h - 3, Math.min(4, r.w - i), 3);
+  if (r.school) { rect('#2f4a3a', r.x + r.w / 2 - 14, r.y + 16, 28, 12); rect('#d9c9a3', r.x + r.w / 2 - 15, r.y + 15, 30, 1); rect('#f1e8d4', r.x + r.w / 2 - 10, r.y + 20, 8, 1); rect('#f1e8d4', r.x + r.w / 2 - 10, r.y + 23, 12, 1); }
+}
+function dreamChains() { const g = DG; for (const cx of [g.HANG.x + 8, g.HANG.x + g.HANG.w - 8]) for (let y = g.F[0].bottom + 4; y < g.HANG.y - 6; y += 3) rect(y % 2 ? D_IRON : '#55596a', cx, y, 2, 2); }
+function dreamBridge() {
+  const g = DG, y = g.L[3].bottom, x0 = g.F[0].x + g.F[0].w + 6, x1 = g.L[3].x - 6;
+  rect(STONE_L, x0, y, x1 - x0, 2); rect(D_IRON, x0, y + 2, x1 - x0, 1); for (let x = x0; x < x1; x += 4) rect(D_IRON, x, y - 8, 1, 8); rect(D_IRON, x0, y - 9, x1 - x0, 1);
+  const lx = g.HANG.x + g.HANG.w + 8; for (let yy = y + 3; yy < g.HANG.y + 8; yy += 2) { rect('#b8702a', lx, yy, 1, 1); rect('#b8702a', lx + 5, yy, 1, 1); if (yy % 6 === 0) rect('#b8702a', lx, yy, 6, 1); }
+}
+function dreamSpine() {
+  const g = DG, x = D_SPINE.x, top = Math.min(g.LEFT_TOP, g.RIGHT_TOP), bottom = g.BY + 60;
+  rect(D_IRON, x - 1, top, D_SPINE.w + 2, bottom - top); rect('#0e1424', x, top + 1, D_SPINE.w, bottom - top - 2); rect(D_GLASS, x, top + 1, D_SPINE.w, bottom - top - 2);
+  for (let y = top + 8; y < bottom; y += 14) rect(D_GLASS_D, x, y, D_SPINE.w, 1);
+  rect(D_IRON, x - 1, top - 3, D_SPINE.w + 2, 3); rect(D_IRON, x + 4, top - 6, 4, 3);
+  // the cab follows whoever is riding; otherwise it waits at the ground floor
+  const rider = [...chars.values()].find((c) => c.where === 'path' && Math.abs(c.x - D_SX) < 0.5);
+  const cabY = Math.round(rider ? rider.y : g.G - 2);
+  rect('#3a3324', x + 1, cabY - 18, D_SPINE.w - 2, 18); rect(D_WARM, x + 2, cabY - 17, D_SPINE.w - 4, 16); rect('#3a3324', x + 1, cabY - 9, D_SPINE.w - 2, 1);
+  for (const r of g.L) { rect('#3a3324', x - 8, r.bottom - 16, 6, 14); rect('#6b4429', x - 7, r.bottom - 15, 4, 12); rect(D_WARM_D, x - 4, r.bottom - 9, 1, 2); }
+  for (const r of g.R) { rect('#3a3324', x + D_SPINE.w + 2, r.bottom - 16, 6, 14); rect('#6b4429', x + D_SPINE.w + 3, r.bottom - 15, 4, 12); rect(D_WARM_D, x + D_SPINE.w + 3, r.bottom - 9, 1, 2); }
+  const lw = pxw('LIFT') + 6; rect('rgba(8,10,24,.8)', x + D_SPINE.w / 2 - lw / 2, top - 16, lw, 10); text('LIFT', x + D_SPINE.w / 2, top - 15, D_WARM, 'center');
+}
+function dreamTube() {
+  const g = DG, y1 = g.TOWER[g.TOWER.length - 1].y, w = 10;
+  for (let y = y1; y <= g.G; y++) { const x = dTubeX(y); rect(D_IRON, x - 1, y, w + 2, 1); rect(D_GLASS, x, y, w, 1); if ((y - y1) % 14 === 0) rect(D_GLASS_D, x, y, w, 1); }
+  const rider = [...chars.values()].find((c) => c.where === 'path' && c.y != null && Math.abs(c.x - (dTubeX(c.y) + 5)) < 1.5);
+  const cy = Math.round(rider ? rider.y : g.G - 2), cx = dTubeX(cy);
+  rect('#3a3324', cx + 1, cy - 16, w - 2, 16); rect(D_WARM, cx + 2, cy - 15, w - 4, 14);
+  for (const q of g.TOWER) { const dx = dTubeX(q.bottom - 2) + w + 2; rect('#3a3324', dx, q.bottom - 16, 6, 14); rect('#6b4429', dx + 1, q.bottom - 15, 4, 12); }
+  const x1 = dTubeX(y1) + 12, lw = pxw('TUBE') + 6; rect('rgba(8,10,24,.8)', x1 - 12 - lw / 2, y1 - 16, lw, 10); text('TUBE', x1 - 12, y1 - 15, D_WARM, 'center');
+}
+function dreamDoor() {
+  // the front door: an arch at the spine's ground stop, with a hedge of sunflowers beside it
+  const G = DG.G, x = D_SPINE.x, w = D_SPINE.w;
+  rect(STONE, x - 7, G - 34, w + 14, 34); dCircle(STONE, x + w / 2, G - 34, w / 2 + 7); dCircle('#0e1424', x + w / 2, G - 28, w / 2 + 2); rect('#0e1424', x - 2, G - 28, w + 4, 28);
+  rect(D_GLASS, x - 2, G - 28, w + 4, 28); rect(TRIM, x - 9, G - 36, w + 18, 2);
+  for (let i = 0; i < 3; i++) rect(i % 2 ? STONE_D : STONE_L, x - 8 - i * 2, G - 3 + i, w + 16 + i * 4, 1);
+  dShade(x - 9, G - 46, w + 18, 46); rect(D_WARM, x + 1, G - 17, w - 2, 16); rect('#3a3324', x + 1, G - 9, w - 2, 1);
+  const night = sky().phase === 'night';
+  rect(night ? '#17301f' : '#2f6b3d', 126, G - 9, 100, 9); rect(night ? '#1d3b27' : '#3f8a4f', 126, G - 9, 100, 2);
+  for (let xx = 132; xx < 226; xx += 14) { rect(D_GREEN_D, xx, G - 16, 1, 8); rect(night ? '#8a6a2a' : '#e3a72f', xx - 2, G - 19, 5, 5); rect('#3a2416', xx - 1, G - 18, 3, 3); }
+}
+function dCresting(x0, x1, y) { for (let x = x0 + 2; x < x1; x += 6) { rect(D_IRON, x, y - 4, 1, 4); rect(D_IRON, x - 1, y - 5, 3, 1); } rect(D_IRON, x0, y - 1, x1 - x0, 1); }
+function dDormer(dx, y, lit) { rect(STONE, dx, y, 12, 14); rect('#3a3324', dx + 2, y + 3, 8, 10); rect(lit ? D_WARM : D_DARK_WIN, dx + 3, y + 4, 6, 8); rect(STONE_D, dx + 5, y + 4, 1, 8); dPoly(SLATE_L, [[dx - 2, y + 1], [dx + 6, y - 7], [dx + 14, y + 1]]); }
+function drawDreamRoofs(t) {
+  const g = DG; if (!g) return;
+  const anyBusy = dBusy(() => true);
+  // one mansard over both stacks; its base follows the two different stack tops, so the roof tilts
+  { const { x0, x1, yl, yr, h } = g.roof, sp = D_SPINE.x + D_SPINE.w + 2;
+    const pts = [[x0, yl], [x0 + 18, yl - h], [x1 - 18, yr - h - 10], [x1, yr], [sp, yr], [sp, yl]];
+    dPoly(SLATE, pts);
+    for (let k = 4; k < h; k += 4) { const f = k / h, lx = x0 + 18 * f, rx = x1 - 18 * f, ly = yl - k, ry = yr - k - 10 * f; dPoly(SLATE_D, [[lx, ly], [rx, ry], [rx, ry + 1], [lx, ly + 1]]); }
+    dPoly(SLATE_L, [[x0 + 18, yl - h], [x1 - 18, yr - h - 10], [x1 - 18, yr - h - 8], [x0 + 18, yl - h + 2]]);
+    for (let x = x0 + 20; x < x1 - 18; x += 6) { const y = yl - h + (yr - 10 - yl) * (x - x0 - 18) / (x1 - x0 - 36); rect(D_IRON, x, y - 5, 1, 5); rect(D_IRON, x - 1, y - 6, 3, 1); }
+    dShadePoly(pts);
+    const c = g.ctrl; rect('#1c2140', c.x0, c.y0, c.x1 - c.x0, c.y1 - c.y0); rect('#2a3058', c.x0, c.y1 - 3, c.x1 - c.x0, 2); for (let x = c.x0 + 6; x < c.x1; x += 12) rect('#232a4e', x, c.y0, 1, c.y1 - c.y0);
+    dDormer(x0 + 26, yl - 24, anyBusy);
+  }
+  // the floating wing's own roof, with the attic inside and an onion dome
+  { const { x0, x1, yb, h } = g.floatRoof;
+    dPoly(SLATE, [[x0, yb], [x0 + 10, yb - h], [x1 - 10, yb - h], [x1, yb]]); ctx.fillStyle = SLATE_D; for (let y = yb - h + 4; y < yb - 1; y += 4) { const k = Math.round((yb - y) * 10 / h); ctx.fillRect(x0 + k, y, x1 - x0 - 2 * k, 1); }
+    rect(SLATE_L, x0 + 10, yb - h - 1, x1 - x0 - 20, 2); dShadePoly([[x0, yb], [x0 + 10, yb - h - 2], [x1 - 10, yb - h - 2], [x1, yb]]);
+    rect('#2b1f17', x0 + 14, yb - h + 4, x1 - x0 - 28, h - 6); rect('#5a4632', x0 + 14, yb - 3, x1 - x0 - 28, 2);
+    const n = attic.length; for (let i = 0; i < Math.min(4, n); i++) { const bx = x0 + 18 + i * 13, bh = 7 + (i % 2) * 3; rect('#8a6a44', bx, yb - 3 - bh, 11, bh); rect('#6b4f30', bx, yb - 3 - bh, 11, 1); }
+    text(n ? 'ATTIC ' + n : 'ATTIC', (x0 + x1) / 2, yb - h + 6, '#a6aed2', 'center');
+    if (ui.sel?.kind === 'attic') { ctx.strokeStyle = '#ffd27a'; ctx.lineWidth = 1; ctx.strokeRect(x0 + 14.5, yb - h + 4.5, x1 - x0 - 29, h - 7); }
+    const dx = x1 - 22, dy = yb - h - 2; dCircle(D_COPPER, dx, dy - 7, 8); dPoly(D_COPPER, [[dx - 8, dy - 7], [dx, dy - 24], [dx + 8, dy - 7]]); rect(D_COPPER_D, dx - 8, dy - 8, 16, 2); rect(D_WARM_D, dx, dy - 27, 1, 4); dShade(dx - 9, dy - 28, 18, 22);
+  }
+  // the leaning tower's crooked roof and pennant
+  { const q = g.TOWER[g.TOWER.length - 1], x0 = q.x - 8, x1 = q.x + q.w + 8, yb = q.y - 9, apex = [x1 - 22, yb - 40];
+    dPoly(SLATE_D, [[x0, yb], apex, [x1, yb]]); ctx.fillStyle = SLATE; for (let y = apex[1] + 4; y < yb; y += 4) { const k = (y - apex[1]) / (yb - apex[1]); ctx.fillRect(Math.round(apex[0] - (apex[0] - x0) * k) + 1, y, Math.round((x1 - x0) * k) - 2, 1); }
+    const flap = reduce ? 0 : Math.round(Math.sin(t * 4) * Math.min(2, 1 + Math.abs(windPush(weatherNow())) * 2));
+    rect(D_IRON, apex[0], apex[1] - 10, 1, 10); dPoly('#c94f3d', [[apex[0] + 1, apex[1] - 10], [apex[0] + 11, apex[1] - 7 + flap], [apex[0] + 1, apex[1] - 4]]);
+    const busy = dBusy((r) => r.school), gx = apex[0] - 12, gy = yb - 16; rect(STONE, gx, gy, 10, 12); rect('#3a3324', gx + 2, gy + 2, 6, 9);
+    dShadePoly([[x0, yb], apex, [x1, yb]]); rect(busy ? D_WARM : D_DARK_WIN, gx + 3, gy + 3, 4, 7);
+  }
+  // the chimney, smoking while anyone works
+  { const { x, y } = g.chimney; rect('#7a3940', x, y, 8, 30); rect('#5c2a30', x, y, 2, 30); rect(TRIM, x - 1, y, 10, 2); dShade(x - 1, y, 10, 30);
+    if (anyBusy) for (let i = 0; i < 3; i++) { const rise = reduce ? 0 : (t * 6) % 8; ctx.globalAlpha = .5 - i * .12; dCircle('#cfd4ea', x + 4 + i * 4 + windPush(weatherNow()) * i * 3, y - 6 - i * 8 - rise, 3 + i); } ctx.globalAlpha = 1; }
+  // EDITH's round tower on a thin stalk, with a leaning cone and a weathervane
+  { const tu = g.turret, cx = tu.cx, r = tu.r, bodyTop = tu.bodyTop, bodyBottom = tu.bodyBottom, cone = tu.cone;
+    rect(STONE, cx - 4, tu.stalkTop, 8, tu.stalkBottom - tu.stalkTop); rect(STONE_D, cx + 2, tu.stalkTop, 2, tu.stalkBottom - tu.stalkTop); for (let y = tu.stalkTop + 4; y < tu.stalkBottom; y += 6) rect(STONE_D, cx - 4, y, 8, 1);
+    dPoly(STONE_D, [[cx - 4, tu.stalkTop + 6], [cx + 4, tu.stalkTop + 6], [cx + r + 2, bodyBottom], [cx - r - 2, bodyBottom]]);
+    rect(STONE, cx - r, bodyTop, 2 * r, bodyBottom - bodyTop); rect(STONE_D, cx + r - 3, bodyTop, 3, bodyBottom - bodyTop); rect(STONE_L, cx - r, bodyTop, 2, bodyBottom - bodyTop);
+    for (let y = bodyTop + 8; y < bodyBottom; y += 6) rect(STONE_D, cx - r, y, 2 * r, 1);
+    rect(TRIM, cx - r - 2, bodyBottom - 3, 2 * r + 4, 3); rect(TRIM, cx - r - 2, bodyTop + 1, 2 * r + 4, 2);
+    rect('#1f3f4a', cx - r + 3, bodyTop + 6, 2 * r - 8, bodyBottom - bodyTop - 12); rect(D_TEAL_D, cx - r + 3, bodyBottom - 8, 2 * r - 8, 2);
+    for (const wx of [cx - 10, cx + 6]) { rect('#3a3324', wx, bodyTop + 10, 5, 10); rect(D_DARK_WIN, wx + 1, bodyTop + 11, 3, 8); }
+    dPoly(SLATE, [[cx - r - 4, bodyTop + 1], [cx + 4, bodyTop - cone], [cx + r + 4, bodyTop + 1]]); rect(SLATE_L, cx - r - 4, bodyTop, 2 * r + 8, 2);
+    dShade(cx - r - 4, bodyTop - cone - 10, 2 * r + 8, bodyBottom - bodyTop + cone + 12); dShade(cx - 4, tu.stalkTop, 8, tu.stalkBottom - tu.stalkTop);
+    for (const wx of [cx - 10, cx + 6]) rect(D_WARM, wx + 1, bodyTop + 11, 3, 8); // EDITH keeps her lights on
+    // the weathervane points where the real wind blows; in still air it spins while agents are busy
+    const vx = cx + 4, vy = bodyTop - cone - 7, wv = weatherNow();
+    rect(D_IRON, vx, vy - 1, 1, 8);
+    if (wv && (wv.wind || 0) >= 8) { const p = windPush(wv); rect(D_IRON, vx - 4, vy, 9, 1); rect(D_WARM_D, p >= 0 ? vx + 5 : vx - 5, vy, 1, 1); }
+    else { const turn = reduce || !anyBusy ? 0 : Math.floor(t * 3) % 4; if (turn % 2 === 0) rect(D_IRON, vx - 4, vy, 9, 1); else rect(D_IRON, vx - 1, vy, 3, 1); rect(D_WARM_D, turn < 2 ? vx + 5 : vx - 5, vy, 1, 1); }
+  }
+}
+/** Staff room extras: wood-framed glass doors onto an always-sunny garden, and the trophy shelf. */
+function dreamStaffExtras(r, fy) {
+  const gx = r.x + r.w - 70, gy = r.y + 8, gw = 60, gh = 40;
+  rect('#b8702a', gx - 2, gy - 2, gw + 4, gh + 4); const g = ctx.createLinearGradient(0, gy, 0, gy + gh); g.addColorStop(0, '#4f97d9'); g.addColorStop(1, '#bfe3f5'); ctx.fillStyle = g; ctx.fillRect(gx, gy, gw, gh);
+  rect('#eef3f8', gx + 8, gy + 6, 14, 4); rect('#eef3f8', gx + 12, gy + 4, 8, 3); rect('#eef3f8', gx + 36, gy + 10, 16, 4);
+  rect('#3f8a4f', gx, gy + gh - 12, gw, 12); rect('#2f6b3d', gx, gy + gh - 14, gw, 3); rect('#56924f', gx, gy + gh - 11, gw, 1);
+  for (const sx of [gx + 10, gx + 30, gx + 48]) { rect(D_GREEN_D, sx, gy + gh - 22, 1, 10); rect('#e3a72f', sx - 2, gy + gh - 25, 5, 5); rect('#3a2416', sx - 1, gy + gh - 24, 3, 3); }
+  rect('#b8702a', gx + gw / 2 - 1, gy, 2, gh); rect('#b8702a', gx + gw / 4, gy, 1, gh); rect('#b8702a', gx + gw * 3 / 4, gy, 1, gh);
+  rect(D_TEAL, r.x + 100, fy - 16, 10, 16); rect('#c94f3d', r.x + 102, fy - 13, 6, 3); rect('#f1e8d4', r.x + 103, fy - 6, 3, 2); // coffee machine
+  const tx = r.x + 66, n = trophies.length; rect(D_TEAL_D, tx, r.y + 14, 54, 2); rect(D_TEAL_D, tx, r.y + 26, 54, 2);
+  for (let i = 0; i < Math.min(6, n); i++) { const x = tx + 4 + (i % 3) * 16, y = i < 3 ? r.y + 14 : r.y + 26; rect(D_WARM_D, x + 1, y - 7, 4, 6); rect(D_WARM_D, x, y - 8, 6, 2); rect(D_WARM_D, x - 1, y - 5, 1, 2); rect(D_WARM_D, x + 6, y - 5, 1, 2); rect('#6b4429', x, y - 1, 6, 1); }
+  text(n ? 'TROPHIES ' + n : 'TROPHIES', tx + 27, r.y + 30, D_WARM_D, 'center');
+}
+
 /* ---------- Victorian theme: a Second Empire style mansion (original pixel art) ---------- */
 const STONE = '#eceae4', STONE_D = '#cfccc3', STONE_L = '#fbfaf6', TRIM = '#bdb8ab', SLATE = '#8c4a36', SLATE_D = '#6e3826', SLATE_L = '#a85d45';
 function drawVictorianBody(t) {
@@ -633,7 +878,8 @@ function drawGrounds(t) {
   const night = sky().phase === 'night', leaf = night ? '#13241c' : '#2f5a3a', leaf2 = night ? '#1a3126' : '#3c6e47', trunk = night ? '#1d1510' : '#4a3424';
   const sway = reduce ? 0 : windPush(weatherNow()) * 3 + Math.sin(t * (1 + Math.abs(windPush(weatherNow())) * 3)) * Math.abs(windPush(weatherNow())) * 2;
   const tree = (x, h, r) => { rect(trunk, x - 1, groundY - h, 3, h); x += sway; for (const [dx, dy, rr] of [[0, -h, r], [-r * 0.6, -h + r * 0.5, r * 0.8], [r * 0.6, -h + r * 0.4, r * 0.8]]) { ctx.fillStyle = leaf; ctx.beginPath(); ctx.arc(x + dx, groundY + dy, rr, 0, Math.PI * 2); ctx.fill(); } ctx.fillStyle = leaf2; ctx.beginPath(); ctx.arc(x - r * 0.3, groundY - h - r * 0.3, r * 0.5, 0, Math.PI * 2); ctx.fill(); };
-  for (const [x, h, r] of [[8, 70, 22], [30, 46, 16], [470, 54, 18], [500, 80, 24], [748, 64, 20], [730, 40, 14]]) tree(x, h, r);
+  const TREES = theme() === 'dream' ? [[40, 70, 22], [14, 44, 14], [100, 56, 18], [486, 50, 14], [506, 86, 24], [748, 64, 20], [730, 40, 14]] : [[8, 70, 22], [30, 46, 16], [470, 54, 18], [500, 80, 24], [748, 64, 20], [730, 40, 14]];
+  for (const [x, h, r] of TREES) tree(x, h, r);
   const wn = weatherNow(), snowing = wn && ((wn.code >= 71 && wn.code <= 77) || wn.code === 85 || wn.code === 86);
   if (snowing) { rect(night ? '#9aa6bd' : '#eef2f8', 0, groundY - 2, W, 6); rect('#ffffff', 0, groundY - 2, W, 1); }
   else { rect(night ? '#1c3324' : '#3f7a45', 0, groundY - 1, W, 5); rect(night ? '#24402c' : '#56924f', 0, groundY - 1, W, 1); }
@@ -674,7 +920,7 @@ function drawVictorianDoor() {
   for (let i = 0; i < 3; i++) rect(i % 2 ? STONE_D : STONE_L, x - 6 - i * 2, groundY - 3 + i, 20 + i * 4, 1);
 }
 function drawRoof(t) {
-  if (theme() === 'victorian') drawVictorianRoof(t); else drawClassicRoof();
+  if (theme() === 'dream') drawDreamRoofs(t); else if (theme() === 'victorian') drawVictorianRoof(t); else drawClassicRoof();
   drawRoofContents(t);
 }
 function drawClassicRoof() {
@@ -687,6 +933,14 @@ function drawRoofContents(t) {
   // control room meter: share of the selected period by project
   const projs = snap.projects.filter((p) => val(p).w > 0).sort((a, b) => val(b).w - val(a).w);
   const sum = projs.reduce((s, p) => s + val(p).w, 0) || 1;
+  if (theme() === 'dream' && DG) {
+    const c = DG.ctrl, mid = Math.round((c.x0 + c.x1) / 2), bx = mid - 60, bw = 120, by = c.y0 + 15;
+    text('CONTROL ROOM', mid, c.y0 + 3, '#a6aed2', 'center');
+    rect('#120d0a', bx - 1, by - 1, bw + 2, 8);
+    let xx = bx; for (const p of projs) { const w = Math.round(bw * val(p).w / sum); if (w > 0) rect(projColor(p.id), xx, by, Math.min(w, bx + bw - xx), 6); xx += w; }
+    text((ui.period === 'week' ? '7 DAYS ' : 'TODAY ') + fmt(sum), mid, by + 9, '#f1e8d4', 'center');
+    return; // the attic lives in the floating wing's roof and the trophies in the staff room
+  }
   text('CONTROL ROOM', 240, 31, '#a6aed2', 'center');
   const bx = 180, bw = 120, by = 43; rect('#120d0a', bx - 1, by - 1, bw + 2, 8);
   let x = bx;
@@ -750,7 +1004,7 @@ function drawPlaces(t) {
   }
   // porch + mailbox
   const asks = snap.asks.filter((a) => a.kind !== 'done').length + inboxCount();
-  if (theme() !== 'victorian') { rect('#5d3a22', 464, groundY - 29, 12, 29); rect('#8a5a36', 465, groundY - 27, 10, 27); rect('#e3a72f', 472, groundY - 13, 1, 2); }
+  if (theme() === 'classic') { rect('#5d3a22', 464, groundY - 29, 12, 29); rect('#8a5a36', 465, groundY - 27, 10, 27); rect('#e3a72f', 472, groundY - 13, 1, 2); }
   rect('#4a4f5c', 486, groundY - 15, 2, 15); rect('#c94f3d', 481, groundY - 23, 12, 8);
   if (asks) { rect('#e3a72f', 493, groundY - 29, 1, 8); rect('#e3a72f', 494, groundY - 29, 4, 3); if (reduce || Math.floor(t * 2.5) % 2 === 0) { rect('#ff6b5e', 479, groundY - 37, 16, 10); text(String(asks), 487, groundY - 36, '#1b0d0b', 'center'); } }
   else rect('#e3a72f', 493, groundY - 19, 4, 1);
@@ -803,7 +1057,8 @@ const atWork = () => new Set([...chars.values()].map((c) => c.look?.key).filter(
 function drawStaff(r, t) {
   const fy = floorY(r);
   rect('#5b3b5e', r.x + 8, fy - 7, 44, 5); rect('#6e4a72', r.x + 8, fy - 11, 44, 4); rect('#5b3b5e', r.x + 6, fy - 11, 3, 9); rect('#5b3b5e', r.x + 51, fy - 11, 3, 9); // sofa
-  rect('#2b2f3a', r.x + r.w - 18, fy - 16, 10, 16); rect('#c94f3d', r.x + r.w - 16, fy - 13, 6, 3); rect('#f1e8d4', r.x + r.w - 15, fy - 6, 3, 2); // coffee machine
+  if (theme() === 'dream') dreamStaffExtras(r, fy);
+  else { rect('#2b2f3a', r.x + r.w - 18, fy - 16, 10, 16); rect('#c94f3d', r.x + r.w - 16, fy - 13, 6, 3); rect('#f1e8d4', r.x + r.w - 15, fy - 6, 3, 2); } // coffee machine
   const free = teamList().filter((l) => !l.holo && !atWork().has(l.key));
   free.slice(0, 7).forEach((l, i) => {
     const c = { look: l, body: l.body || '#777', hair: l.hair || '#2a1a10', skin: l.skin || '#e0b48a' };
@@ -817,10 +1072,10 @@ function drawStaff(r, t) {
 function drawControlCrew(t) {
   const crew = teamList().filter((l) => l.holo && !atWork().has(l.key));
   const busy = rooms.filter((r) => !r.vacant && !r.staff && [...chars.values()].some((c) => c.room === r && c.a && c.a.state !== 'idle'));
-  const spots = [165, 306, 346];
+  const spots = theme() === 'dream' && DG ? [{ x: DG.ctrl.x0 + 26, y: DG.ctrl.floorY }, { x: DG.ctrl.x1 - 26, y: DG.ctrl.floorY }, { x: DG.turret.cx, y: DG.turret.floorY }] : [{ x: 165, y: 59 }, { x: 306, y: 59 }, { x: 346, y: 59 }];
   crew.slice(0, 3).forEach((l, k) => {
     const c = { look: l };
-    if (!busy.length) { const x = spots[k]; const top = drawPerson(c, x, 59, t, { still: true }); text(String(l.name || l.key).toUpperCase(), x, top - 9, l.holo, 'center'); return; }
+    if (!busy.length) { const x = spots[k].x; const top = drawPerson(c, x, spots[k].y, t, { still: true }); text(String(l.name || l.key).toUpperCase(), x, top - 9, l.holo, 'center'); return; }
     const period = 12, clock = t + k * 4, slot = Math.floor(clock / period), u = (clock % period) / period;
     const r = busy[(slot + k) % busy.length], x = r.x + r.w - 14 - k * 13, fy = floorY(r);
     const fade = reduce ? 1 : Math.min(1, u / 0.08, (1 - u) / 0.08);
@@ -962,7 +1217,8 @@ function draw(t) {
   drawWorld(t);
   const inRoom = (r) => [...chars.values()].filter((c) => c.room === r && c.where === 'room');
   for (const r of rooms) {
-    drawWall(r); designFrame(r, t);
+    if (r.flip) { ctx.save(); ctx.translate(0, 2 * r.y + r.h); ctx.scale(1, -1); } // the joke room: everything inside upside down
+    drawWall(r); if (theme() === 'dream') dreamInterior(r); designFrame(r, t);
     const fy = floorY(r), here = inRoom(r);
     for (const [type, sx] of r.st) {
       const near = (st) => here.some((c) => c.a.state === st && arrived(c) && Math.abs(c.x - sx) < 18);
@@ -974,13 +1230,16 @@ function draw(t) {
     const cx = r.x + Math.round(r.w / 2); rect('#1a1a1a', cx, r.y, 1, 7);
     const lit = [...chars.values()].some((c) => c.room === r && c.a.state !== 'idle');
     rect(lit ? '#ffd27a' : '#6b5a3a', cx - 4, r.y + 7, 9, 3);
+    if (r.flip) ctx.restore();
     if (r.staff) drawStaff(r, t);
     if (troubled(r)) drawTrouble(r, t);
     if (r.vacant) { const cx = r.x + r.w / 2, fy2 = floorY(r); rect('#6b4429', cx - 14, fy2 - 34, 28, 14); rect('#e8dcc0', cx - 13, fy2 - 33, 26, 12); text('FREE', cx, fy2 - 32, '#3a2416', 'center'); rect('#6b4429', cx - 1, fy2 - 20, 2, 20); }
     if (r.guest) { const names = r.guest.slice(0, Math.max(1, Math.floor((r.w - 40) / 38))).map((p) => p.name.toUpperCase()); names.forEach((n, i) => { const dx = r.x + 30 + i * 38; rect('#3a2416', dx - 9, fy - 30, 18, 30); rect('#6b4429', dx - 8, fy - 29, 16, 29); rect('#e3a72f', dx + 4, fy - 16, 2, 2); text(fitText(n, 36), dx, fy - 40, '#cdbb98', 'center'); }); }
   }
+  if (theme() === 'dream') { dreamChains(); dreamBridge(); dreamSpine(); dreamTube(); }
   drawPlaces(t);
   if (theme() === 'victorian') drawVictorianDoor();
+  if (theme() === 'dream') dreamDoor();
   for (const c of chars.values()) drawChar(c, t);
   const total = snap.projects.reduce((s, p) => s + val(p).w, 0) || 1;
   for (const r of rooms) {
@@ -991,12 +1250,14 @@ function draw(t) {
     const v = r.guest ? r.guest.reduce((s, p) => s + val(p).w, 0) : val(r.p).w || 0;
     const pct = r.staff || r.vacant ? '' : ' ' + Math.round(100 * v / total) + '%';
     const waiting = [...chars.values()].some((c) => c.room === r && c.a.state === 'waiting') || (snap.inboxes || []).some((b) => b.asks.length && roomOf[b.project] === r);
-    const pw = pxw(pct), room = r.w - 12 - pw - (waiting ? 9 : 0);
+    const narrow = r.w < 110 && !!pct; // narrow rooms put the percentage on a second line so names aren't cut
+    const pw = narrow ? 0 : pxw(pct), room = r.w - 12 - pw - (waiting ? 9 : 0);
     const lab = fitText(r.label, room), lw = pxw(lab);
-    rect('rgba(8,10,24,.75)', r.x + 3, r.y + 3, Math.ceil(lw + pw) + 6 + (waiting ? 9 : 0), 11);
+    rect('rgba(8,10,24,.75)', r.x + 3, r.y + 3, Math.ceil(Math.max(lw + pw, narrow ? pxw(pct) : 0)) + 6 + (waiting ? 9 : 0), narrow ? 20 : 11);
     let x = r.x + 6;
     if (waiting) { if (reduce || Math.floor(t * 2.5) % 2 === 0) rect('#ff6b5e', x, r.y + 5, 6, 7); x += 9; }
-    text(lab, x, r.y + 4, r.vacant ? '#8a8a96' : projColor(r.id)); text(pct, x + lw, r.y + 4, '#f1e8d4');
+    text(lab, x, r.y + 4, r.vacant ? '#8a8a96' : projColor(r.id));
+    if (narrow) text(pct.trim(), x, r.y + 13, '#f1e8d4'); else text(pct, x + lw, r.y + 4, '#f1e8d4');
   }
   drawRoof(t);
   drawControlCrew(t);
@@ -1260,7 +1521,7 @@ cv.addEventListener('click', (e) => {
   for (const c of chars.values()) { if (c.inside) continue; const fy = charY(c); if (Math.abs(lx - c.x) <= 7 && ly >= fy - 30 && ly <= fy) return select('agent', c.key); }
   if (lx >= 478 && lx <= 498 && ly >= groundY - 40 && ly <= groundY) return $('mail-card').scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block:'nearest' });
   for (const p of PLACES) if (lx >= p.x && lx <= p.x + p.w && ly >= groundY - p.h - 12 && ly <= groundY) return select('place', p.id);
-  if (ly < 60 && lx > 30 && lx < 450) return select('attic', 'attic');
+  if (theme() === 'dream' ? (DG && lx >= DG.floatRoof.x0 && lx <= DG.floatRoof.x1 && ly >= DG.floatRoof.yb - DG.floatRoof.h && ly <= DG.floatRoof.yb) : (ly < 60 && lx > 30 && lx < 450)) return select('attic', 'attic');
   for (const r of rooms) if (lx >= r.x && lx <= r.x + r.w && ly >= r.y && ly <= r.y + r.h) { select('room', r.id); return openView(r.id); }
 });
 $('back').addEventListener('click', closeView);
