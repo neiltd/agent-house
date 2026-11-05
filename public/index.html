@@ -33,6 +33,9 @@ h1{font-family:var(--f-display);font-weight:700;font-size:30px;line-height:1;mar
 @media (max-width:1100px){.main{grid-template-columns:minmax(0,1fr)}}
 .stage{background:var(--stage);border:1px solid var(--line);border-radius:6px;overflow:hidden;min-width:0}
 .scroll{overflow-x:auto}
+.viewbar{display:flex;gap:12px;align-items:center;padding:8px 10px;border-bottom:1px solid var(--line);font-size:13px;color:var(--muted)}
+.viewbar button{font:inherit;font-weight:600;border:1px solid var(--line);background:var(--panel-2);color:var(--ink);border-radius:5px;padding:4px 10px;cursor:pointer}
+.viewbar button:focus-visible{outline:2px solid var(--mustard)}
 canvas{display:block;width:100%;height:auto;cursor:pointer}
 @media (max-width:720px){canvas{width:700px;max-width:none}}
 .legend{display:flex;flex-wrap:wrap;gap:6px 16px;padding:10px 12px;border-top:1px solid var(--line);color:var(--muted);font-size:12.5px}
@@ -165,6 +168,7 @@ code{font-family:var(--f-mono);font-size:12.5px;color:var(--ink);background:var(
 
   <div class="main">
     <section class="stage" aria-label="The house and the street">
+      <div class="viewbar" id="viewbar" hidden><button type="button" id="back">← Back to the house</button><span id="viewname"></span></div>
       <div class="scroll"><canvas id="house" role="img" aria-label="Cutaway house with a room per project and a street of internet tools. Click a character, room, building or the attic for details."></canvas></div>
       <div class="legend">
         <span><span class="lit" aria-hidden="true"></span>Lit room: someone is working</span>
@@ -259,7 +263,7 @@ const SKIN = ['#e0b48a', '#c98e66', '#b8805a', '#d6a57a', '#f0c9a0'];
 let floors = [];
 let snap = null, rooms = [], roomOf = {}, attic = [], trophies = [], groundY = 220;
 const chars = new Map();   // session key -> character
-const ui = { sel: null, period: 'week', tab: 'proj' };
+const ui = { sel: null, period: 'week', tab: 'proj', view: null }; // view: { id, since } when looking inside one room
 
 const PLACES = [
   { id:'library', name:'Public Library', sign:'LIBRARY', x:494, w:54, h:72, body:'#cbbf9f', roof:'#6e6450', tools:'Web search and reading webpages' },
@@ -326,7 +330,7 @@ function computeLayout() {
   for (const r of rooms) roomOf[r.id] = r;
   for (const p of projs) if (!roomOf[p.id]) roomOf[p.id] = roomOf.home;
   for (const r of rooms) r.st = r.vacant ? [] : stations(r);
-  if (cv.height !== H * S) { cv.width = W * S; cv.height = H * S; cv.style.aspectRatio = `${W} / ${H}`; }
+  if (!ui.view && cv.height !== H * S) { cv.width = W * S; cv.height = H * S; cv.style.aspectRatio = `${W} / ${H}`; }
 }
 function stations(r) {
   const st = [], right = r.x + r.w;
@@ -710,10 +714,96 @@ function drawStaff(r, t) {
   });
   if (free.length > 7) text('+' + (free.length - 7), r.x + 98, fy - 34, '#f1e8d4');
 }
+/** JARVIS, FRIDAY and EDITH make rounds: each visits the busy rooms in turn, beaming in and out. Idle: the control room. */
 function drawControlCrew(t) {
-  const free = teamList().filter((l) => l.holo && !atWork().has(l.key));
+  const crew = teamList().filter((l) => l.holo && !atWork().has(l.key));
+  const busy = rooms.filter((r) => !r.vacant && !r.staff && [...chars.values()].some((c) => c.room === r && c.a && c.a.state !== 'idle'));
   const spots = [165, 306, 346];
-  free.slice(0, 3).forEach((l, i) => { const x = spots[i]; const top = drawPerson({ look: l }, x, 59, t, { still: true }); text(String(l.name || l.key).toUpperCase(), x, top - 9, l.holo, 'center'); });
+  crew.slice(0, 3).forEach((l, k) => {
+    const c = { look: l };
+    if (!busy.length) { const x = spots[k]; const top = drawPerson(c, x, 59, t, { still: true }); text(String(l.name || l.key).toUpperCase(), x, top - 9, l.holo, 'center'); return; }
+    const period = 12, clock = t + k * 4, slot = Math.floor(clock / period), u = (clock % period) / period;
+    const r = busy[(slot + k) % busy.length], x = r.x + r.w - 14 - k * 13, fy = floorY(r);
+    const fade = reduce ? 1 : Math.min(1, u / 0.08, (1 - u) / 0.08);
+    ctx.save(); ctx.globalAlpha = Math.max(0, fade);
+    const prev = ctx.globalAlpha, top = drawPerson(c, x, fy, t, { still: true }); ctx.globalAlpha = prev;
+    text(String(l.name || l.key).toUpperCase(), x, top - 9, l.holo, 'center');
+    ctx.restore();
+  });
+}
+
+/* ---------- room close-up: click a room to look inside; the house AIs walk in with you ---------- */
+function openView(id) {
+  const r = rooms.find((x) => x.id === id); if (!r || r.vacant) return;
+  ui.view = { id, since: t };
+  $('viewbar').hidden = false; $('viewname').textContent = r.p.name || r.label;
+  cv.setAttribute('aria-label', `Inside ${r.p.name || r.label}. Press Escape or Back to return to the house.`);
+}
+function closeView() {
+  ui.view = null; $('viewbar').hidden = true;
+  if (cv.height !== H * S) { cv.width = W * S; cv.height = H * S; cv.style.aspectRatio = `${W} / ${H}`; }
+  cv.setAttribute('aria-label', 'Cutaway house with a room per project and a street of internet tools. Click a character, room, building or the attic for details.');
+}
+const Z = 2; // close-up zoom
+function drawRoomView(r, t) {
+  const VIEW_H = 300; // logical height of the close-up, whatever the house's height
+  if (cv.height !== VIEW_H * S) { cv.width = W * S; cv.height = VIEW_H * S; cv.style.aspectRatio = `${W} / ${VIEW_H}`; }
+  ctx.setTransform(S * Z, 0, 0, S * Z, 0, 0); ctx.imageSmoothingEnabled = false;
+  const VW = W / Z, VH = VIEW_H / Z, fy = VH - 16;
+  const v = { ...r, x: 0, y: 0, w: VW, h: VH };
+  drawWall(v);
+  // a window onto the real sky
+  const { phase, w } = sky(); const [top, bottom] = SKIES[phase];
+  rect('#3a2a1c', 10, 12, 52, 44); const g = ctx.createLinearGradient(0, 14, 0, 54); g.addColorStop(0, top); g.addColorStop(1, bottom); ctx.fillStyle = g; ctx.fillRect(12, 14, 48, 40);
+  if (w && (w.code >= 51 && w.code <= 67 || w.code >= 80 && w.code <= 82 || w.code >= 95)) for (let i = 0; i < 14; i++) { ctx.globalAlpha = .6; rect('#9fb8d8', 13 + (i * 7) % 46, 14 + ((i * 11 + (reduce ? 0 : t * 40)) % 38), 1, 3); ctx.globalAlpha = 1; }
+  if (w && w.cloud > 30) { rect(phase === 'night' ? '#3a4160' : '#eef3f8', 20, 22, 18, 5); rect(phase === 'night' ? '#3a4160' : '#eef3f8', 26, 19, 10, 4); }
+  if (!(w && w.cloud > 85)) rect(phase === 'night' ? '#f4e7c0' : '#ffe066', 46, 20, 6, 6);
+  rect('#3a2a1c', 35, 14, 2, 40); rect('#3a2a1c', 12, 33, 48, 2);
+  if (w) text(`${Math.round(w.units === 'f' ? w.temp * 9 / 5 + 32 : w.temp)}°${w.units === 'f' ? 'F' : 'C'} ${WMO(w.code)}`, 36, 58, '#f1e8d4', 'center');
+  // floor
+  rect('#5a3a24', 0, fy, VW, VH - fy); rect('#6b4429', 0, fy, VW, 1); for (let x = 0; x < VW; x += 16) rect('#4a2f1c', x, fy + 1, 1, VH - fy);
+  // furniture, spread across the wider room
+  for (const [type, sx] of stations({ ...v, x: 70, w: VW - 90 })) {
+    if (type === 'desk') desk(sx, fy, false); if (type === 'shelf') shelf(sx, fy); if (type === 'term') term(sx, fy, false, t); if (type === 'chair') chair(sx, fy, projColor(r.id));
+  }
+  // the design on the wall, big
+  const d = r.p.design;
+  if (d) { const x = VW - 120, y = 14; rect('#d9c9a3', x - 2, y - 2, 104, 44); rect('#141a30', x, y, 100, 40); rect(projColor(r.id), x + 4, y + 4, 92, 4); rect('#f1e8d4', x + 4, y + 12, 40, 24); ctx.globalAlpha = .5; rect('#f1e8d4', x + 50, y + 12, 44, 8); rect('#f1e8d4', x + 50, y + 24, 44, 6); ctx.globalAlpha = 1; text(fitText(d.title, 104), x + 50, y + 44, '#f1e8d4', 'center'); }
+  // sign
+  const pct = Math.round(100 * (val(r.p).w || 0) / (snap.projects.reduce((s2, p) => s2 + val(p).w, 0) || 1));
+  const sign = `${r.label}  ${pct}% OF ${ui.period === 'week' ? 'THIS WEEK' : 'TODAY'}`;
+  rect('rgba(8,10,24,.8)', 70, 8, pxw(sign) + 8, 11); text(sign, 74, 9, projColor(r.id));
+  // the people who work here, each with what they're doing
+  const here = [...chars.values()].filter((c) => c.room === r && c.where === 'room');
+  const slots = here.length ? here.map((c, i) => 90 + i * Math.min(70, (VW - 190) / Math.max(1, here.length))) : [];
+  here.forEach((c, i) => {
+    const x = Math.round(slots[i]), a = c.a;
+    const topY = drawPerson(c, x, fy, t, { reading: a.state === 'reading', bob: a.state === 'typing' && !reduce ? Math.floor(t * 7) % 2 : 0, still: true, sub: a.kind === 'sub' && !c.look });
+    text(c.name, x, topY - 10, ui.sel?.kind === 'agent' && ui.sel.id === c.key ? '#ffd27a' : '#f1e8d4', 'center');
+    const what = a.state === 'waiting' ? 'WAITING ON YOU' : a.tool ? `${a.tool}${a.target ? ' ' + a.target : ''}` : (STATE_LABEL[a.state] || a.state);
+    const line = fitText(String(what).toUpperCase(), 66);
+    rect(a.state === 'waiting' ? 'rgba(255,107,94,.85)' : 'rgba(8,10,24,.75)', x - pxw(line) / 2 - 3, fy + 3, pxw(line) + 6, 9); text(line, x, fy + 4, a.state === 'waiting' ? '#1b0d0b' : '#cfd4ea', 'center');
+    c.viewX = x; c.viewFy = fy;
+  });
+  if (!here.length) text('NOBODY IS WORKING HERE RIGHT NOW', VW / 2 + 20, fy - 40, '#cfd4ea', 'center');
+  // JARVIS, FRIDAY and EDITH walk in from the door and report
+  const crew = teamList().filter((l) => l.holo).slice(0, 3);
+  rect('#3b2416', VW - 16, fy - 30, 14, 30); rect('#5a3a24', VW - 15, fy - 29, 12, 29); rect('#e3a72f', VW - 13, fy - 15, 1, 2);
+  const waiting = here.filter((c) => c.a.state === 'waiting').length, working = here.filter((c) => c.a.state !== 'idle').length;
+  const last = here.reduce((m, c) => Math.max(m, c.a.lastTs || 0), r.p.lastActive || 0);
+  const says = {
+    0: working ? `${working} AT WORK${waiting ? `, ${waiting} WAITING ON YOU` : ''}` : here.length ? 'ALL DONE, YOUR TURN' : 'QUIET IN HERE',
+    1: last ? `LAST ACTIVE ${ago(Date.now() - last).toUpperCase()} AGO` : 'NO ACTIVITY YET',
+    2: waiting ? 'SOMETHING NEEDS YOUR OK' : 'ALL CLEAR',
+  };
+  crew.forEach((l, k) => {
+    const spot = VW - 104 + k * 32, p = reduce ? 1 : Math.min(1, (t - ui.view.since - k * 0.5) / 2);
+    if (p <= 0) return;
+    const x = Math.round(VW - 8 - (VW - 8 - spot) * (1 - Math.pow(1 - p, 2)));
+    const topY = drawPerson({ look: l }, x, fy, t, { still: p >= 1 });
+    text(String(l.name || l.key).toUpperCase(), x, topY - 9, l.holo, 'center');
+    if (p >= 1) { const msg = `${String(l.name || l.key).toUpperCase()}: ${says[k]}`, bw = pxw(msg) + 10, by = 24 + k * 12; rect('rgba(8,10,24,.85)', 70, by, bw, 10); rect(l.holo, 70, by, 2, 10); text(msg, 76, by + 1, '#f1e8d4'); }
+  });
 }
 function drawChar(c, t) {
   if (c.inside) return;
@@ -745,6 +835,7 @@ function drawChar(c, t) {
 }
 function draw(t) {
   ctx.setTransform(S, 0, 0, S, 0, 0); ctx.imageSmoothingEnabled = false;
+  if (ui.view) { const r = rooms.find((x) => x.id === ui.view.id); if (r) return drawRoomView(r, t); closeView(); }
   if (TOP()) { rect('#0f1530', 0, 0, W, TOP() + 1); ctx.setTransform(S, 0, 0, S, 0, TOP() * S); } // headroom: everything shifts down
   drawWorld(t);
   const inRoom = (r) => [...chars.values()].filter((c) => c.room === r && c.where === 'room');
@@ -967,13 +1058,21 @@ toggle('tab-proj', 'tab-agent', 'tab', 'proj'); toggle('tab-agent', 'tab-proj', 
 
 cv.addEventListener('click', (e) => {
   if (!snap) return;
-  const b = cv.getBoundingClientRect(), lx = (e.clientX - b.left) * W / b.width, ly = (e.clientY - b.top) * H / b.height - TOP();
+  const b = cv.getBoundingClientRect();
+  if (ui.view) {
+    const vx = (e.clientX - b.left) * (W / Z) / b.width, vy = (e.clientY - b.top) * (300 / Z) / b.height;
+    for (const c of chars.values()) if (c.room?.id === ui.view.id && c.viewX != null && Math.abs(vx - c.viewX) <= 7 && vy >= c.viewFy - 30 && vy <= c.viewFy) return select('agent', c.key);
+    return;
+  }
+  const lx = (e.clientX - b.left) * W / b.width, ly = (e.clientY - b.top) * H / b.height - TOP();
   for (const c of chars.values()) { if (c.inside) continue; const fy = c.where === 'street' ? groundY : floorY(c.room); if (Math.abs(lx - c.x) <= 7 && ly >= fy - 30 && ly <= fy) return select('agent', c.key); }
   if (lx >= 478 && lx <= 498 && ly >= groundY - 40 && ly <= groundY) return $('mail-card').scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block:'nearest' });
   for (const p of PLACES) if (lx >= p.x && lx <= p.x + p.w && ly >= groundY - p.h - 12 && ly <= groundY) return select('place', p.id);
   if (ly < 60 && lx > 30 && lx < 450) return select('attic', 'attic');
-  for (const r of rooms) if (lx >= r.x && lx <= r.x + r.w && ly >= r.y && ly <= r.y + r.h) return select('room', r.id);
+  for (const r of rooms) if (lx >= r.x && lx <= r.x + r.w && ly >= r.y && ly <= r.y + r.h) { select('room', r.id); return openView(r.id); }
 });
+$('back').addEventListener('click', closeView);
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && ui.view) closeView(); });
 
 /* ---------- live data ---------- */
 function apply(s) {
