@@ -309,8 +309,8 @@ function computeLayout() {
       const w = i === spec.r.length - 1 ? spec.x1 - x : Math.round(span * ratio / sum);
       const id = ids[i] ?? null, p = id ? byId[id] : null;
       const [wall, pat, kind] = WALLS[(wi++) % WALLS.length];
-      if (p) out.push({ id: p.id, p, label: (school ? (p.short || p.name) : p.name).toUpperCase(), x, y, w, h: spec.h, wall, pat, kind, school });
-      else out.push({ id: 'vacant-' + floors.length + '-' + i, p: { id: 'vacant', name: 'Empty room', week: { w: 0, raw: 0 }, today: { w: 0, raw: 0 } }, label: 'TO LET', x, y, w, h: spec.h, wall: '#3a3a42', pat: '#42424c', kind: 'panel', vacant: true });
+      if (p) out.push({ id: p.id, p, label: school ? (p.short || p.name) : p.name, x, y, w, h: spec.h, wall, pat, kind, school });
+      else out.push({ id: 'vacant-' + floors.length + '-' + i, p: { id: 'vacant', name: 'Empty room', week: { w: 0, raw: 0 }, today: { w: 0, raw: 0 } }, label: 'Free room', x, y, w, h: spec.h, wall: '#3a3a42', pat: '#42424c', kind: 'panel', vacant: true });
       x += w + GAP;
     });
     floors.push({ x0: spec.x0, x1: spec.x1, y, h: spec.h, school: !!school });
@@ -322,8 +322,8 @@ function computeLayout() {
   groundY = y - 4;
   const by = groundY + 8;
   const homeP = projs.find((p) => p.id === 'home') || { id:'home', name:'Home Office', week:{w:0,raw:0}, today:{w:0,raw:0} };
-  out.push({ id:'home', p: homeP, label:'HOME OFFICE', x:24, y:by, w:150, h:60, wall:'#4b3b5c', pat:'#55446a', kind:'panel' });
-  out.push({ id:'staff', p:{ id:'staff', name:'Staff Room', week:{w:0,raw:0}, today:{w:0,raw:0} }, label:'STAFF ROOM', x:178, y:by, w:278, h:60, wall:'#3f5a4a', pat:'#476553', kind:'stripe', staff: true });
+  out.push({ id:'home', p: homeP, label:'Home office', x:24, y:by, w:150, h:60, wall:'#4b3b5c', pat:'#55446a', kind:'panel' });
+  out.push({ id:'staff', p:{ id:'staff', name:'Staff Room', week:{w:0,raw:0}, today:{w:0,raw:0} }, label:'Staff room', x:178, y:by, w:278, h:60, wall:'#3f5a4a', pat:'#476553', kind:'stripe', staff: true });
   H = by + 60 + 14 + TOP();
   rooms = out;
   roomOf = {};
@@ -349,11 +349,11 @@ const floorY = (r) => r.y + r.h - 2;
 const STATION = { typing:'desk', reading:'shelf', running:'term', idle:'chair', thinking:'desk', waiting:'desk' };
 function nameFor(a, room) {
   const look = lookOf(a.label);
-  if (look) return String(look.name || look.key).toUpperCase().slice(0, 9);
-  if (a.kind === 'sub') return String(a.label).toUpperCase().slice(0, 9);
+  if (look) return String(look.name || look.key).slice(0, 12);
+  if (a.kind === 'sub') return String(a.label).slice(0, 12);
   const mains = snap.agents.filter((b) => b.kind === 'main' && roomOf[b.project] === room);
   const i = mains.findIndex((b) => b.key === a.key);
-  return mains.length > 1 ? 'MAIN ' + (i + 1) : 'MAIN';
+  return mains.length > 1 ? 'Main ' + (i + 1) : 'Main';
 }
 function stationX(c, type) {
   const r = c.room;
@@ -424,17 +424,12 @@ function move(c, dt) {
 /* ---------- drawing ---------- */
 function rect(c, x, y, w, h) { ctx.fillStyle = c; ctx.fillRect(x, y, w, h); }
 /* Built-in 3x5 pixel font, so the page loads nothing from outside (a page that can approve things should not run third-party code). */
-const GLYPHS = {"A": ".#.#.#####.##.#", "B": "##.#.###.#.###.", "C": ".###..#..#...##", "D": "##.#.##.##.###.", "E": "####..##.#..###", "F": "####..##.#..#..", "G": ".###..#.##.#.##", "H": "#.##.#####.##.#", "I": "###.#..#..#.###", "J": "..#..#..##.#.#.", "K": "#.##.###.#.##.#", "L": "#..#..#..#..###", "M": "#.########.##.#", "N": "##.#.##.##.##.#", "O": ".#.#.##.##.#.#.", "P": "##.#.###.#..#..", "Q": ".#.#.##.###..##", "R": "##.#.###.#.##.#", "S": ".###...#...###.", "T": "###.#..#..#..#.", "U": "#.##.##.##.####", "V": "#.##.##.##.#.#.", "W": "#.##.########.#", "X": "#.##.#.#.#.##.#", "Y": "#.##.#.#..#..#.", "Z": "###..#.#.#..###", "0": "####.##.##.####", "1": ".#.##..#..#.###", "2": "##...#.#.#..###", "3": "##...#.#...###.", "4": "#.##.####..#..#", "5": "####..##...###.", "6": ".###..####.####", "7": "###..#.#..#..#.", "8": "####.#####.####", "9": "####.####..###.", ".": ".............#.", ",": "..........#.#..", ":": "....#.....#....", "%": "#.#..#.#.#..#.#", "-": "......###......", "+": "....#.###.#....", "/": "..#..#.#.#..#..", "!": ".#..#..#.....#.", "?": "##...#.#.....#.", "'": ".#..#..........", "(": ".#.#..#..#...#.", ")": ".#...#..#..#.#.", "&": ".#.#.#.#.#.#.##", "#": "#.#####.#####.#", "…": "............#.#", "·": ".......#.......", "=": "...###...###...", "_": "............###", " ": "..............."};
-const pxw = (s) => Math.max(0, String(s).length * 4 - 1);
+/* Labels use a real font, drawn sharp at full canvas resolution, so they stay readable at any size. */
+const FONT = '600 8px ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif';
+const pxw = (s) => { ctx.font = FONT; return Math.ceil(ctx.measureText(String(s)).width); };
 function text(s, x, y, c, align = 'left') {
-  s = String(s).toUpperCase();
-  let x0 = Math.round(align === 'center' ? x - pxw(s) / 2 : align === 'right' ? x - pxw(s) : x);
-  ctx.fillStyle = c;
-  for (const ch of s) {
-    const g = GLYPHS[ch] || GLYPHS['?'];
-    for (let i = 0; i < 15; i++) if (g[i] === '#') ctx.fillRect(x0 + (i % 3), Math.round(y) + 1 + Math.floor(i / 3), 1, 1);
-    x0 += 4;
-  }
+  ctx.font = FONT; ctx.textBaseline = 'top'; ctx.textAlign = align; ctx.fillStyle = c;
+  ctx.fillText(String(s), x, y - 0.5);
 }
 function fitText(s, maxW) { s = String(s); if (pxw(s) <= maxW) return s; while (s.length > 1 && pxw(s + '…') > maxW) s = s.slice(0, -1); return s + '…'; }
 const stars = Array.from({ length: 70 }, (_, i) => ({ x: (i * 97) % W, y: (i * 37) % 70 + 2, p: i * 1.3 }));
