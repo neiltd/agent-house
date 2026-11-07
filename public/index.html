@@ -1542,11 +1542,11 @@ function openView(id) {
   const r = rooms.find((x) => x.id === id); if (!r || r.vacant) return;
   ui.view = { id, since: t };
   $('viewbar').hidden = false; $('viewname').textContent = r.p.name || r.label;
-  cv.setAttribute('aria-label', `Inside ${r.p.name || r.label}. Press Escape or Back to return to the house.`);
+  cv.setAttribute('aria-label', `Inside ${r.p.name || r.label}. Press Escape, Back, or click the door to return to the house.`);
   if (game.on) chip();
 }
 function closeView() {
-  ui.view = null; $('viewbar').hidden = true;
+  ui.view = null; ui.viewDoor = null; ui.doorHover = false; cv.title = ''; $('viewbar').hidden = true;
   if (!game.on && cv.height !== H * S) { cv.width = W * S; cv.height = H * S; cv.style.aspectRatio = `${W} / ${H}`; }
   cv.setAttribute('aria-label', 'Cutaway house with a room per project and a street of internet tools. Click a character, room, building or the attic for details.');
 }
@@ -1624,7 +1624,12 @@ function drawRoomView(r, t) {
   if (!here.length) text('NOBODY IS WORKING HERE RIGHT NOW', VW / 2 + 20, fy - 40, '#cfd4ea', 'center');
   // the house AIs walk in from the door and report
   const crew = teamList().filter((l) => l.holo).slice(0, 3);
-  rect('#3b2416', VW - 16, fy - 30, 14, 30); rect('#5a3a24', VW - 15, fy - 29, 12, 29); rect('#e3a72f', VW - 13, fy - 15, 1, 2);
+  // the door out: click it to go back to the house
+  const doorHi = !!ui.doorHover;
+  rect(doorHi ? '#ffd27a' : '#3b2416', VW - 16, fy - 30, 14, 30); rect(doorHi ? '#7a5234' : '#5a3a24', VW - 15, fy - 29, 12, 29); rect('#e3a72f', VW - 13, fy - 15, 1, 2);
+  const ew = pxw('EXIT') + 6, ex = VW - 2 - ew;
+  rect('rgba(8,10,24,.8)', ex, fy - 41, ew, 9); text('EXIT', ex + 3, fy - 40, doorHi ? '#ffd27a' : '#f1e8d4');
+  ui.viewDoor = { x: VW - 24, y: fy - 42, w: 24, h: 42 };
   const waiting = here.filter((c) => c.a.state === 'waiting').length, working = here.filter((c) => c.a.state !== 'idle').length;
   const last = here.reduce((m, c) => Math.max(m, c.a.lastTs || 0), r.p.lastActive || 0);
   const says = {
@@ -2149,6 +2154,7 @@ cv.addEventListener('click', (e) => {
   if (ui.view) {
     const { vx, vy } = viewPoint(e, b);
     if (game.on && gameClickView(vx, vy)) return;
+    if (onDoor(vx, vy)) { ui.doorHover = false; closeView(); if (game.on) { chip(); gameLabel(); } return; }
     for (const nt of ui.viewNotes || []) if (vx >= nt.x && vx <= nt.x + nt.w && vy >= nt.y && vy <= nt.y + nt.h) return game.on ? openQuest(pidOfRoom(ui.view.id), nt.key || undefined) : showAsksFor(ui.view.id, nt.key);
     for (const c of chars.values()) if (c.room?.id === ui.view.id && c.viewX != null && Math.abs(vx - c.viewX) <= 7 && vy >= c.viewFy - 30 && vy <= c.viewFy) { select('agent', c.key); if (game.on && game.drawer !== 'N') openDrawer('N'); return; }
     return;
@@ -2164,6 +2170,13 @@ cv.addEventListener('click', (e) => {
   for (const r of rooms) if (lx >= r.x && lx <= r.x + r.w && ly >= r.y && ly <= r.y + r.h) { select('room', r.id); openView(r.id); const pid = pidOfRoom(r.id); if (game.on && pid && questsFor(pid).length) openQuest(pid); return; }
 });
 $('back').addEventListener('click', closeView);
+function onDoor(vx, vy) { const d = ui.viewDoor; return !!d && vx >= d.x && vx <= d.x + d.w && vy >= d.y && vy <= d.y + d.h; }
+cv.addEventListener('mousemove', (e) => {
+  if (!ui.view) { if (ui.doorHover) ui.doorHover = false; return; }
+  const { vx, vy } = viewPoint(e, cv.getBoundingClientRect());
+  ui.doorHover = onDoor(vx, vy); cv.title = ui.doorHover ? 'Back to the house' : '';
+});
+cv.addEventListener('mouseleave', () => { ui.doorHover = false; });
 document.addEventListener('keydown', (e) => { if (!game.on && e.key === 'Escape' && ui.view) closeView(); });
 
 /* ---------- game mode: the house fills the screen, a HUD floats over it, and asks open as quests ----------
